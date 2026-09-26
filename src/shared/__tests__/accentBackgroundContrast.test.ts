@@ -3,12 +3,30 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, relative } from "node:path";
 import {
   AA_NORMAL_TEXT,
+  PALETTE_SELF_CHECK,
+  ThemeName,
   compositeOver,
   contrastRatio,
   resolveTokenHex,
   resolveTokenLayers,
+  tailwindPaletteMap,
   tokenValueInBlock,
 } from "./helpers/contrast";
+import {
+  BACKDROPS as CENSUS_BACKDROPS,
+  describeIdentityFaults,
+  identityContext,
+  parseCacheStats,
+  resetParseCache,
+  identityFaults,
+  resolveSiteId,
+  siteMarkers,
+  walkComponents,
+  censusPaletteBackgrounds,
+  censusWashes,
+  scanPaletteInSource,
+  scanWashesInSource,
+} from "./helpers/deferredCensus";
 
 /**
  * CALL-SITE guard for accent-derived backgrounds.
@@ -92,30 +110,125 @@ import {
  * converting oklch() to sRGB likewise makes `bg-red-600` fully decidable.
  *
  * Both work. Neither is shippable in this branch, and the reason is population
- * size, not soundness — the census found 48 failing wash pairings across 13
- * files and 27 failing palette pairings across 8 files, i.e. roughly 23
- * distinct call sites over ~19 files, all pre-existing and all outside the
- * seven this task was scoped to (Toast, Select, CatalogTab, ChangelogPage,
- * SpoolThumb, SectionNav, PriceHeroCard, ExportActionsCard,
- * GcodePreviewPanel, PrivacyScreen, HistoryTab, CustomerTab, SpoolForm,
- * UpdateNotification and the StlPreview error banner among them). Turning the
- * guard on for them now means committing red, and quietly adding an xfail
- * allowance instead would convert a conformance guard into a known-issues
- * tracker that can go stale.
+ * size, not soundness — the population is real, pre-existing, and spread across
+ * components this task was never scoped to (Select, CatalogTab, ChangelogPage,
+ * SpoolThumb, SectionNav, PriceHeroCard, ExportActionsCard, GcodePreviewPanel,
+ * PrivacyScreen, HistoryTab, CustomerTab, SpoolForm, UpdateNotification and the
+ * StlPreview error banner among them). Turning the guard on for them now means
+ * committing red, and quietly adding an xfail allowance instead would convert a
+ * conformance guard into a known-issues tracker that can go stale.
  *
- * So the census numbers are pinned as regression floors at the bottom of this
- * file. They can only go DOWN as sites are migrated, and a floor that stops
- * moving is a visible signal to schedule the next wave. The status fill tokens
- * added above are the one part that was brought into scope, because they are
- * solid, so no backdrop has to be assumed and the existing machinery decides
- * them exactly.
+ * So the population is held by a PER-SITE identity pin at the bottom of this
+ * file, not by a count. Every current failing site must have a unique pinned
+ * identity and its own shape; a new identity, a changed shape, ambiguity, a
+ * missing identity, an orphan marker and a duplicated or reused id all fail. No
+ * aggregate population count is asserted anywhere in this file, and none should
+ * be: a number about the real population fails as sites are fixed, so it punishes
+ * the work the guard exists to police. A resolved site simply leaves the active
+ * scan and may leave a stale pin entry behind.
+ * The status fill tokens added above are the one part that was brought into
+ * scope, because they are solid, so no backdrop has to be assumed and the
+ * existing machinery decides them exactly.
+ *
+ * THE CENSUS NUMBERS, CORRECTED — this paragraph used to be wrong
+ * -----------------------------------------------------------
+ * This block previously read "48 failing wash pairings across 13 files and 27
+ * failing palette pairings across 8 files, i.e. roughly 23 distinct call sites
+ * over ~19 files". Re-deriving both with the helpers in
+ * ./helpers/deferredCensus found NEITHER figure correct, and both were wrong in
+ * the one direction a backlog report must never be wrong in:
+ *
+ *   family        cited      actual (at the base commit)   measured at 1b84671
+ *   washes        48 / 13    18 sites / 10 shapes / 11 f    15 / 8 / 10
+ *   palette       27 /  8    11 sites /  4 shapes /  7 f    11 / 4 / 7
+ *
+ * The cited numbers were roughly 2.5x the truth. A figure that overstates the
+ * backlog is not merely untidy: it reads as "less work than there is", which is
+ * the direction that lets a deferred population age indefinitely without anyone
+ * noticing it was never finished. The right-hand column is a dated measurement,
+ * NOT a threshold: no test compares it, and it is expected to fall as sites are
+ * migrated.
+ *
+ * Two further reasons the old count was wrong, both now fixed:
+ *
+ *  - It counted FILES, so a site that migrated from one broken form to a
+ *    DIFFERENT broken form left the number untouched and the floor green. That
+ *    is the defect the review named. The replacement is not a count either: it
+ *    is the per-site identity -> shape pin, which names the site that changed
+ *    form instead of only noticing that some total did not move.
+ *  - It matched the accent token only, so it never counted the status washes at
+ *    all. `--color-danger/90` and `--color-success/90` were invisible to it, and
+ *    those measured 2.07:1 and 2.10:1 — the two worst pairings in the app. A
+ *    floor that does not cover the population it is a floor for is decoration.
  */
+
+/**
+ * The comparison the pin is built on, at module scope so the regression below
+ * can drive it directly while the census assertions drive it through the tree.
+ */
+function siteFaults(
+  discovered: ReadonlyArray<{ siteId: string | null; shape: string }>,
+  pin: Record<string, string[]>,
+): Array<{
+  siteId: string;
+  kind: "unidentified" | "unpinned" | "changedForm";
+  detail: string;
+}> {
+  const faults: Array<{
+    siteId: string;
+    kind: "unidentified" | "unpinned" | "changedForm";
+    detail: string;
+  }> = [];
+  const seen = new Map<string, Set<string>>();
+  for (const site of discovered) {
+    if (!site.siteId) {
+      faults.push({
+        siteId: "<none>",
+        kind: "unidentified",
+        detail: `  ${site.shape}`,
+      });
+      continue;
+    }
+    const have = seen.get(site.siteId) ?? new Set<string>();
+    have.add(site.shape);
+    seen.set(site.siteId, have);
+  }
+  for (const [siteId, shapes] of [...seen].sort()) {
+    const pinned = pin[siteId];
+    if (!pinned) {
+      faults.push({
+        siteId,
+        kind: "unpinned",
+        detail: `  now: ${[...shapes].sort().join(" | ")}`,
+      });
+      continue;
+    }
+    const want = [...shapes].sort();
+    if (want.join(" || ") !== [...pinned].sort().join(" || ")) {
+      faults.push({
+        siteId,
+        kind: "changedForm",
+        detail: `  now:    ${want.join(" | ")}\n      pinned: ${[...pinned].sort().join(" | ")}`,
+      });
+    }
+  }
+  return faults;
+}
 
 const projectRoot = resolve(__dirname, "../..", "..");
 const srcRoot = resolve(projectRoot, "src");
 const tokensCss = readFileSync(resolve(srcRoot, "styles/tokens.css"), "utf-8");
 
 const THEMES = [{ name: "light" }, { name: "dark" }] as const;
+
+/**
+ * The COMPLETE set of backdrops an element in this app can sit on. Re-exported
+ * from the census module rather than restated, because three blocks below now
+ * measure over it and a second copy of this list is a second thing that can
+ * drift out of step with the first — which is the failure this file exists to
+ * catch, so it must not have one of its own.
+ */
+const BACKDROPS = [...CENSUS_BACKDROPS];
 
 /**
  * Background tokens derived from the accent hue or from a status hue, in the
@@ -125,9 +238,10 @@ const THEMES = [{ name: "light" }, { name: "dark" }] as const;
  * tokens (--accent-fill, --accent-fill-hover) and the two status FILL families
  * added for the confirm dialog (--danger-fill/-hover, --warning-fill/-hover).
  * An unlisted token is skipped SILENTLY, which is the main way this guard
- * could go quiet — which is why `finds the accent-background call sites it is
- * meant to police` pins a floor on the discovered population instead of
- * trusting the regex.
+ * could go quiet — which is why `discovers accent pairings through the
+ * production scanner, on source it owns` drives the real scanner over source
+ * the test owns and requires it to find the pairings, instead of trusting the
+ * regex or counting a real population it must not depend on.
  *
  * Both families are policed because both have shipped broken: the foreground
  * family put white on #818cf8 (2.98:1), and the fill family was declared but
@@ -145,11 +259,11 @@ const THEMES = [{ name: "light" }, { name: "dark" }] as const;
  * same colour, so both are listed.
  */
 const BG_TOKEN =
-  /^(color-accent|color-primary|accent|color-accent-hover|accent-hover|accent-fill|accent-fill-hover|color-accent-fill|color-accent-fill-hover|danger-fill|danger-fill-hover|color-danger-fill|color-danger-fill-hover|warning-fill|warning-fill-hover|color-warning-fill|color-warning-fill-hover)$/;
+  /^(color-accent|color-primary|accent|color-accent-hover|accent-hover|accent-fill|accent-fill-hover|color-accent-fill|color-accent-fill-hover|danger-fill|danger-fill-hover|color-danger-fill|color-danger-fill-hover|warning-fill|warning-fill-hover|color-warning-fill|color-warning-fill-hover|positive-fill|color-positive-fill)$/;
 
 /** Text tokens that are legal in a class string, resolved per theme. */
 const TEXT_TOKEN =
-  /^(color-text-primary|text-primary|color-text-inverse|text-inverse|color-accent-text|accent-fill-fg|color-accent-fill-fg|danger-fill-fg|color-danger-fill-fg|warning-fill-fg|color-warning-fill-fg|color-accent|accent|color-text-secondary|text-secondary|color-text-muted)$/;
+  /^(color-text-primary|text-primary|color-text-inverse|text-inverse|color-accent-text|accent-fill-fg|color-accent-fill-fg|danger-fill-fg|color-danger-fill-fg|warning-fill-fg|color-warning-fill-fg|positive-fill-fg|color-positive-fill-fg|color-accent|accent|color-text-secondary|text-secondary|color-text-muted)$/;
 
 /** Hard-coded text colours with no token. */
 const TEXT_LITERAL: Record<string, string> = { "text-white": "#ffffff" };
@@ -199,6 +313,51 @@ function isSolidBg(utility: string): boolean {
   return /^bg-\[var\(--[a-z0-9-]+\)\]$/i.test(stripVariants(utility));
 }
 
+/** True for a text utility this guard can measure: a token or a bare literal. */
+function isTextUtility(utility: string): boolean {
+  const base = stripVariants(utility);
+  return base in TEXT_LITERAL || /^text-\[var\(--[a-z0-9-]+\)\]$/i.test(base);
+}
+
+/**
+ * A background utility as LAYERS, in whichever of the two spellings the call
+ * site used: `bg-[var(--x)]` is solid, `bg-[var(--x)]/NN` carries that alpha on
+ * top of whatever the token itself is. Returning the token too lets a caller
+ * report which token failed to resolve.
+ *
+ * `theme` is REQUIRED, not defaulted. A default of "light" would silently
+ * measure the dark-mode block against a light backdrop, which turns a real
+ * failure into a green test — the mistake this shape prevents.
+ *
+ * Returns null for any other background form (`bg-red-600`, `bg-black/40`), so
+ * a site written in a shape this cannot decide reports as unmeasured rather
+ * than as measured-and-fine.
+ */
+function bgLayersOf(
+  utility: string,
+  theme: ThemeName,
+): { token: string; hex: string; alpha: number } | null {
+  const m = stripVariants(utility).match(
+    /^bg-\[var\(--([a-z0-9-]+)\)\](?:\/(\d{1,3}))?$/i,
+  );
+  if (!m) return null;
+  const layers = resolveTokenLayers(tokensCss, theme, m[1]);
+  if (!layers) return null;
+  return {
+    token: m[1],
+    hex: layers.hex,
+    alpha: m[2] ? (parseInt(m[2], 10) / 100) * layers.alpha : layers.alpha,
+  };
+}
+
+/** An ink utility resolved to a hex in one theme, or null if it does not. */
+function inkHexOf(utility: string, theme: ThemeName): string | null {
+  const base = stripVariants(utility);
+  if (base in TEXT_LITERAL) return TEXT_LITERAL[base];
+  const token = tokenOf(base, "text");
+  return token ? resolveTokenHex(tokensCss, theme, token) : null;
+}
+
 const pairings: Pairing[] = [];
 const unresolvable: { file: string; line: number; token: string }[] = [];
 
@@ -214,12 +373,7 @@ for (const file of walk(srcRoot).sort()) {
     if (!utilities.some(isSolidBg)) continue;
 
     const bgs = utilities.filter(isSolidBg);
-    const texts = utilities.filter((u) => {
-      const base = stripVariants(u);
-      return (
-        base in TEXT_LITERAL || /^text-\[var\(--[a-z0-9-]+\)\]$/i.test(base)
-      );
-    });
+    const texts = utilities.filter(isTextUtility);
     if (!bgs.length || !texts.length) continue;
 
     const line = source.slice(0, literal.index!).split("\n").length;
@@ -263,18 +417,187 @@ for (const file of walk(srcRoot).sort()) {
   }
 }
 
-describe("accent-derived call sites meet WCAG AA text contrast", () => {
-  it("finds the accent-background call sites it is meant to police", () => {
-    // A guard that silently matches nothing is worse than no guard: it would
-    // report green forever. Pin a floor on the population.
-    expect(
-      pairings.length,
-      "no accent-background/text pairings were discovered — the literal scan " +
-        "has probably stopped matching the class strings it was written for",
-    ).toBeGreaterThan(20);
+const WASH_SITE_PIN: Record<string, string[]> = {
+  "catalog-tab-printer-custom-badge": [
+    "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+  ],
+  "catalog-tab-material-custom-badge": [
+    "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+  ],
+  "catalog-tab-marketplace-custom-badge": [
+    "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+  ],
+  "changelog-latest-badge": [
+    "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+  ],
+  "gcode-preview-read-error-banner": [
+    "bg-[var(--color-danger)]/90 + text-[var(--color-text-primary)]",
+  ],
+  "gcode-preview-parse-error-banner": [
+    "bg-[var(--color-danger)]/90 + text-[var(--color-text-primary)]",
+  ],
+  "price-hero-edit-price-button": [
+    "hover:bg-[var(--revenue)]/10 + hover:text-[var(--revenue)]",
+  ],
+  "price-hero-margin-label": ["bg-[var(--accent)]/15 + text-[var(--accent)]"],
+  "quote-section-view-quote-button": [
+    "hover:bg-[var(--color-accent)]/20 + hover:text-[var(--color-accent)]",
+  ],
+  "section-nav-desktop-item": [
+    "bg-[var(--color-accent)]/15 + text-[var(--color-accent)]",
+  ],
+  "section-nav-compact-item": [
+    "bg-[var(--color-accent)]/15 + text-[var(--color-accent)]",
+  ],
+  "select-option-thumb": ["bg-[var(--accent)]/20 + text-[var(--accent)]"],
+  "data-testid=spool-thumb": [
+    "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+  ],
+  "export-actions-csv-button": [
+    "hover:bg-[var(--info)]/80 + text-[var(--text-inverse)]",
+  ],
+  "stl-preview-error-banner": [
+    "bg-[var(--color-danger)]/90 + text-[var(--color-text-primary)]",
+  ],
+};
 
-    const files = new Set(pairings.map((p) => p.file));
-    expect(files.size).toBeGreaterThan(5);
+const PALETTE_SITE_PIN: Record<string, string[]> = {
+  "catalog-tab-save-printer-button": [
+    "bg-emerald-500 + text-white",
+    "bg-emerald-600 + text-white",
+  ],
+  "customer-tab-delete-button": ["bg-red-600 + text-[var(--color-danger)]"],
+  "history-tab-delete-entry-button": [
+    "bg-red-600 + text-[var(--color-danger)]",
+  ],
+  "privacy-screen-delete-all-button": ["bg-red-500 + text-white"],
+  "quote-section-export-pdf-button": [
+    "bg-emerald-500 + text-white",
+    "bg-emerald-600 + text-white",
+  ],
+  "spool-form-use-existing-button": [
+    "bg-emerald-500 + text-white",
+    "bg-emerald-600 + text-white",
+  ],
+  "update-notification-install-button": [
+    "bg-emerald-500 + text-white",
+    "bg-emerald-600 + text-white",
+  ],
+};
+
+/**
+ * The FULL validation path over the real tree, exactly as the guard runs it:
+ * scan every component, resolve each pairing's identity, collect identity
+ * ownership faults, then check every current site against its own pin.
+ *
+ * A function rather than an inline assertion, so a test can drive it against a
+ * MUTATED tree. That is the point: the stale-site regression has to prove the
+ * integrated path still passes after a site is fixed, which it cannot do by
+ * calling `siteFaults` on hand-filtered census rows. The overrides map is keyed
+ * by absolute file path and substitutes source for that file only; every other
+ * file is read from disk, so the rest of the tree stays real.
+ */
+/**
+ * Tailwind's theme, converted once.
+ *
+ * `theme.css` is a large file and `tailwindPaletteMap` walks all of it, and this
+ * function is called once per validation pass. Re-reading and re-converting it
+ * each time was pure repeated work.
+ */
+let paletteMemo: Map<string, string> | null = null;
+function tailwindPalette(): Map<string, string> {
+  paletteMemo ??= tailwindPaletteMap(
+    readFileSync(
+      resolve(projectRoot, "node_modules/tailwindcss/theme.css"),
+      "utf-8",
+    ),
+  );
+  return paletteMemo;
+}
+
+function validateRealTree(
+  washPin: Record<string, string[]>,
+  palettePin: Record<string, string[]>,
+  overrides: Map<string, string> = new Map(),
+): { faults: string[]; active: number } {
+  const paletteMap = tailwindPalette();
+  const faults: string[] = [];
+  let active = 0;
+  for (const file of walkComponents(srcRoot)) {
+    const source = overrides.get(file) ?? readFileSync(file, "utf-8");
+    const rel = relative(projectRoot, file);
+    const ctx = identityContext(source);
+    const washSites = scanWashesInSource({ tokensCss, file, source }).failing;
+    const paletteSites = scanPaletteInSource({
+      tokensCss,
+      file,
+      source,
+      palette: paletteMap,
+    }).failing;
+    active += washSites.length + paletteSites.length;
+    for (const site of [...washSites, ...paletteSites]) {
+      resolveSiteId(ctx, site.offset);
+    }
+    for (const fault of identityFaults(ctx)) {
+      faults.push(`${rel}\n${describeIdentityFaults([fault])}`);
+    }
+    for (const [family, sites, pin] of [
+      ["wash", washSites, washPin],
+      ["palette", paletteSites, palettePin],
+    ] as const) {
+      for (const row of siteFaults(sites, pin)) {
+        faults.push(
+          `${rel}\n  ${family} site ${row.siteId} [${row.kind}]\n${row.detail}`,
+        );
+      }
+    }
+  }
+  return { faults, active };
+}
+
+describe("accent-derived call sites meet WCAG AA text contrast", () => {
+  it("discovers accent pairings through the production scanner, on source it owns", () => {
+    // This replaces `expect(pairings.length).toBeGreaterThan(20)` and
+    // `expect(shapes.size).toBeGreaterThan(10)`. Both were floors on the REAL
+    // population, and a floor on the real population is the same defect as an
+    // exact count: it fails as sites are fixed, so it punishes the work it is
+    // supposed to police. What the floors were actually protecting against is
+    // still worth protecting — a scan that silently matches nothing reports
+    // green forever — so it is protected directly, by running the real scanner
+    // over source the test owns and requiring it to find the pairings.
+    const withPairings = scanWashesInSource({
+      tokensCss,
+      file: "src/Fixture.tsx",
+      source: [
+        "export function Fixture() {",
+        "  return (",
+        '    <span className="bg-[var(--color-accent)]/20 text-[var(--color-accent)]">A</span>',
+        '    <span className="bg-[var(--color-accent)]/20 text-[var(--color-text-primary)]">B</span>',
+        "  );",
+        "}",
+      ].join("\n"),
+    });
+    expect(
+      withPairings.failing.length + withPairings.passing.length,
+      "the production scanner must find the two pairings it was written for",
+    ).toBe(2);
+    expect(
+      new Set(
+        [...withPairings.failing, ...withPairings.passing].map((p) => p.shape),
+      ).size,
+      "and it must distinguish their two forms, since a file count cannot",
+    ).toBe(2);
+
+    const withoutPairings = scanWashesInSource({
+      tokensCss,
+      file: "src/Fixture.tsx",
+      source: 'export const x = <span className="flex gap-2" />;',
+    });
+    expect(
+      withoutPairings.failing.length + withoutPairings.passing.length,
+      "and it must report nothing when there is nothing, so a non-zero count " +
+        "above means the scanner matched rather than the fixture being noisy",
+    ).toBe(0);
   });
 
   it.each(THEMES)(
@@ -409,19 +732,6 @@ describe("tinted-wash call sites keep their ink at >= 4.5:1 on every surface", (
     },
   ];
 
-  /**
-   * The complete set of backdrops. Order is irrelevant; exhaustiveness is the
-   * point. If a new surface token is ever added, add it here too, because a
-   * backdrop left out of this list is a hole in the proof.
-   */
-  const BACKDROPS = [
-    "surface-canvas",
-    "surface-raised",
-    "surface-overlay",
-    "surface-sunken",
-    "surface-input",
-  ];
-
   it("names only real backdrops, so the proof stays complete", () => {
     for (const surface of BACKDROPS) {
       expect(
@@ -547,43 +857,885 @@ describe("tinted-wash call sites keep their ink at >= 4.5:1 on every surface", (
   });
 });
 
-describe("guard coverage limits, asserted so they stay honest", () => {
-  it("skips translucent accent backgrounds rather than guessing a backdrop", () => {
-    const translucent = /bg-\[var\(--(?:color-)?accent\)\]\/\d+/;
-    let found = 0;
-    for (const file of walk(srcRoot)) {
-      if (file.includes("__tests__") || file.includes(".test.")) continue;
-      if (translucent.test(readFileSync(file, "utf-8"))) found++;
+describe("toast variants keep their ink at >= 4.5:1 in both themes", () => {
+  const toastSource = readFileSync(
+    resolve(srcRoot, "shared/components/ui/Toast.tsx"),
+    "utf-8",
+  );
+
+  /**
+   * `{ error: "bg-…/90 border-… text-…", … }` as declared, one entry per
+   * `typeStyles` key. Tolerates the value sitting on the key's line or the next
+   * one, and any of the three quote styles, so an unrelated refactor cannot turn
+   * the block below into a vacuous pass — the "finds the three variants" test
+   * asserts it parsed.
+   *
+   * KNOWN LIMIT: a value assembled from a template expression (`${styles.x}`)
+   * does not match, and would report as a missing variant rather than as a
+   * silent pass. That is the failure direction worth having.
+   */
+  const variants: Record<string, string> = {};
+  for (const m of toastSource.matchAll(
+    /\b(error|success|info):\s*(["'`])([^"'`]*)\2/g,
+  )) {
+    variants[m[1]] = m[3];
+  }
+
+  interface ToastVariant {
+    name: string;
+    /** the background utility exactly as written */
+    bgUtility: string;
+    /** the ink utility exactly as written */
+    inkUtility: string;
+  }
+
+  const parsed: ToastVariant[] = Object.entries(variants).map(
+    ([name, classString]) => {
+      const utilities = classString.split(/\s+/).filter(Boolean);
+      const bg = utilities.find((u) =>
+        /^bg-\[var\(--[a-z0-9-]+\)\](\/\d+)?$/i.test(stripVariants(u)),
+      );
+      const ink = utilities.find(isTextUtility);
+      expect(
+        [bg, ink],
+        `Toast's \`${name}\` variant must carry one var()-backed background and ` +
+          `one text utility for this block to measure it; got: ${classString}`,
+      ).not.toContain(undefined);
+      return { name, bgUtility: bg!, inkUtility: ink! };
+    },
+  );
+
+  it("finds the three toast variants, so nothing below is vacuous", () => {
+    expect(Object.keys(variants).sort()).toEqual(["error", "info", "success"]);
+  });
+
+  it.each(THEMES)(
+    "keeps every toast variant's ink at >= 4.5:1 in $name mode",
+    (theme) => {
+      const failures: string[] = [];
+      for (const variant of parsed) {
+        const bg = bgLayersOf(variant.bgUtility, theme.name);
+        const ink = inkHexOf(variant.inkUtility, theme.name);
+        if (!bg || !ink) {
+          failures.push(
+            `  ${variant.name}: ${variant.bgUtility} / ${variant.inkUtility} ` +
+              `does not resolve in ${theme.name} mode — if it is a typo, that is the finding`,
+          );
+          continue;
+        }
+        // Compositing a solid layer (alpha 1) is the identity, so this one loop
+        // is correct for the fixed form AND for a regression to the translucent
+        // one. There is no branch that only runs in the passing case.
+        for (const backdrop of BACKDROPS) {
+          const surface = resolveTokenHex(tokensCss, theme.name, backdrop)!;
+          const composited = compositeOver(bg, surface);
+          const ratio = contrastRatio(ink, composited);
+          if (ratio < AA_NORMAL_TEXT) {
+            failures.push(
+              `  ${variant.name}  ${ink} on ${composited} ` +
+                `(${variant.inkUtility} on ${variant.bgUtility} over ` +
+                `--${backdrop} ${surface}) = ${ratio.toFixed(2)}:1`,
+            );
+          }
+        }
+      }
+      expect(
+        failures,
+        `${failures.length} toast state(s) below WCAG AA (${AA_NORMAL_TEXT}:1) ` +
+          `in ${theme.name} mode:\n${failures.join("\n")}`,
+      ).toHaveLength(0);
+    },
+  );
+
+  it("names an ink that does not flip between themes", () => {
+    // The invariant behind the numbers, stated so it survives a refactor that
+    // changes the colours. No single text token can be correct on a
+    // theme-independent backdrop in both themes — which is the whole reason
+    // --danger-fill-fg and --warning-fill-fg exist. So the ink is required to be
+    // a per-variant -fg. This is the assertion that catches the defect even if a
+    // future fill were to measure 4.5:1 by luck in one theme.
+    for (const variant of parsed) {
+      const light = inkHexOf(variant.inkUtility, "light");
+      const dark = inkHexOf(variant.inkUtility, "dark");
+      expect(
+        light,
+        `${variant.inkUtility} must resolve in light`,
+      ).not.toBeNull();
+      expect(
+        dark,
+        `Toast's \`${variant.name}\` paints ${variant.inkUtility}, which flips ` +
+          `${light} -> ${dark} between themes. A flipping ink on a ` +
+          `theme-independent backdrop is the defect itself and no value of it ` +
+          `can pass in both — use this variant's own -fg token.`,
+      ).toBe(light);
     }
-    // If this ever hits 0 the skip has become dead code and the documented
-    // limitation should be revisited rather than left as a stale caveat.
-    expect(found).toBeGreaterThan(0);
+  });
+
+  it("paints a solid fill, so no toast pairing depends on what is behind it", () => {
+    // The `90` is why the pairing was undecidable rather than merely wrong. A
+    // solid backdrop is decided by the tokens alone.
+    for (const variant of parsed) {
+      const bg = bgLayersOf(variant.bgUtility, "light");
+      expect(
+        bg?.alpha,
+        `Toast's \`${variant.name}\` variant still paints a translucent backdrop ` +
+          `(${variant.bgUtility}); its effective colour then depends on whatever ` +
+          `is behind the toast, which no contrast guard can decide`,
+      ).toBe(1);
+    }
+  });
+
+  it("keeps the three variants distinguishable from each other", () => {
+    // A toast's only state distinction IS its variant colour — there is no
+    // hover, because it is not a control. If two fills converge, a failure stops
+    // being tellable from a success, and every ratio above would still pass:
+    // legibility and distinctness are different properties.
+    const fills = parsed.map((v) => bgLayersOf(v.bgUtility, "light")?.hex);
+    for (const fill of fills) expect(fill).toBeTruthy();
+    expect(
+      new Set(fills).size,
+      `the three toast fills must differ: ${fills}`,
+    ).toBe(3);
+  });
+});
+
+describe("every CURRENT deferred site is pinned by name, with its form", () => {
+  /**
+   * WHY THIS BLOCK REPLACED A FILE-COUNT FLOOR
+   * -----------------------------------------
+   * The previous floor counted FILES matching
+   * `/bg-\[var\(--(?:color-)?accent\)\]\/\d+/` and asserted `files.length <= 16`.
+   * Three things were wrong with it, and the first is the one that hides bugs.
+   *
+   * 1. A file count cannot see a site changing FORM. Migrate
+   *    `bg-[var(--color-accent)]/20 text-[var(--color-accent)]` to a different
+   *    broken pairing in the same file and the count is unchanged, so the floor
+   *    reports green over a population that is exactly as broken as before.
+   *    The floor's number is therefore not a measure of the work left; it is a
+   *    measure of how many files were touched once.
+   * 2. It could not see a site changing form WITHIN a file either: fix one of
+   *    three sites in CatalogTab and the file is still listed.
+   * 3. The regex matched the accent token only, so it never counted the status
+   *    washes at all — `--color-danger/90` and `--color-success/90` were
+   *    invisible to it, and those measured 2.07:1 and 2.10:1. A floor that does
+   *    not cover the population it is a floor for is decoration.
+   *
+   * The unit is now a SITE — one (background, ink) pairing at one source
+   * location — named by its owning element, with its shape pinned against that
+   * name. Neither half is a count: a count cannot see two sites that share a
+   * shape, and a shape list alone cannot tell which element changed. Naming the
+   * site gives both, and costs nothing when a site is fixed.
+   *
+   * ONE DIRECTIONALITY, STATED PLAINLY
+   * ----------------------------------
+   * The shape list is an ALLOWLIST: a shape that appears and is not listed
+   * fails. A listed shape that no longer occurs does NOT fail, because this
+   * file's stated design is that fixing a site must never fail the suite — only
+   * lower the number. The cost of that choice is real and worth naming: a
+   * migrated site leaves a stale line here. It is accepted rather than solved
+   * with a two-directional assertion because the alternative punishes the exact
+   * behaviour the guard exists to encourage, and a guard that cries wolf is
+   * disabled. No count is pinned beside the list and none should be: the list is
+   * validated against the CURRENT source only, and a resolved site leaving a
+   * stale entry is the accepted cost of that direction.
+   *
+   * THE NUMBERS ARE MEASURED, NOT INHERITED
+   * ----------------------------------------
+   * The header block above USED TO cite a census of "48 failing wash pairings
+   * across 13 files and 27 failing palette pairings across 8 files"; it now
+   * carries the corrected table. Re-deriving both with the helpers in
+   * ./helpers/deferredCensus found neither cited figure correct: the wash family
+   * is 18 failing sites across 10 shapes and 11 files at the base commit, and
+   * the palette family is 11 failing sites across 4 shapes and 7 files. Both
+   * cited numbers were roughly 2.5x the truth, and both were wrong in the
+   * direction that makes a floor look like LESS work than there is — which is
+   * the direction a floor must never be wrong in.
+   *
+   * What is pinned below is what the census computes, and the census runs in
+   * this suite, so the number can be re-derived rather than taken on trust.
+   * There are NO population floors here — not 15 wash sites, not 11 palette
+   * sites, not any other number. The only real-tree population assertion left is
+   * `unresolved === 0` in both families, because the census must fail closed. The
+   * 15 and 11 figures survive only as the dated measurements in the table above;
+   * the wash figure fell from 18 because this branch tokenised the toast, which
+   * removed three of them.
+   */
+  const census = censusWashes({ tokensCss, srcRoot, projectRoot });
+  const palette = censusPaletteBackgrounds({
+    tokensCss,
+    srcRoot,
+    projectRoot,
+    themeCss: readFileSync(
+      resolve(projectRoot, "node_modules/tailwindcss/theme.css"),
+      "utf-8",
+    ),
   });
 
   /**
-   * The census in the header block was taken before the seven call sites in
-   * this branch were fixed. These two floors pin what is LEFT, so the deferred
-   * population can only shrink and the caveat cannot quietly rot into a lie.
-   * They are `toBeLessThanOrEqual` on purpose: fixing a site must never fail
-   * this suite, only lower the number.
+   * THE PIN IS PER SITE — the owning JSX element, by its own identity
+   *
+   * A site is the element that owns the pairing, resolved by a hybrid: a static
+   * `data-testid`/`id` the element already carries, otherwise a source-only
+   * comment beside it. Never a runtime attribute added for the test, never a
+   * line number (shifts on any edit above), never a per-file or global shape set
+   * (a site migrating to an already-allowlisted form is invisible to both), and
+   * never a localized `aria-label`, which is localized at 20 of these sites and
+   * would make the key a translation string.
+   *
+   * The value is a SHAPE LIST rather than one shape: four elements pair
+   * `bg-emerald-600` and its `hover:bg-emerald-500` with a single ink, so one
+   * identity legitimately covers two occurrences.
+   *
+   * ONE-DIRECTIONAL, and the cost is still paid: a pinned site that no longer has
+   * a deferred pairing does NOT fail, because fixing a site must never fail this
+   * suite — only lower the count. A resolved site therefore leaves a stale entry
+   * behind, and the map over-describes the backlog until pruned by hand. The
+   * contract is one-directional in BOTH directions of that sentence: every CURRENT
+   * site must exist, hold exactly one identity, and match its own pinned value;
+   * nothing requires a pinned entry to still be in use.
    */
-  it("keeps the deferred translucent-accent population shrinking", () => {
-    const translucent = /bg-\[var\(--(?:color-)?accent\)\]\/\d+/;
-    const files: string[] = [];
-    for (const file of walk(srcRoot)) {
-      if (file.includes("__tests__") || file.includes(".test.")) continue;
-      if (translucent.test(readFileSync(file, "utf-8"))) files.push(file);
-    }
-    // 16 files at the time of writing. QuoteSection and MaterialSection left
-    // this population in this branch; the rest are the documented next wave.
+
+  /** siteId -> the shapes its element is pinned to. */
+  function describeSiteFaults(
+    family: string,
+    rows: Array<{ siteId: string; kind: string; detail: string }>,
+  ): string {
+    return (
+      `${rows.length} ${family} SITE(S) below AA are not accounted for by their own pin:\n` +
+      rows.map((r) => `  ${r.siteId}  [${r.kind}]\n${r.detail}`).join("\n") +
+      `\n\nA site is the owning JSX element, named by a static data-testid/id it ` +
+      `already carries or by a source-only comment beside it. "unidentified" ` +
+      `means the element has neither. "unpinned" means a new element appeared. ` +
+      `"changedForm" means the element is pinned to a different shape — which is ` +
+      `what a same-declaration substitution looks like, and is the thing a ` +
+      `position-based key could not see.`
+    );
+  }
+
+  it("resolves every wash token it pairs, so the census is not a partial view", () => {
+    // A census that silently skips what it cannot resolve reports a smaller
+    // population, which reads as progress. That is the failure direction this
+    // guard must never have, so unresolvable pairings are a finding, not a skip.
+    // This is also the only population assertion left on the real tree: the one
+    // number that cannot be satisfied by doing less work.
     expect(
-      files.length,
-      `translucent accent washes remain in ${files.length} file(s); the header ` +
-        `block says 16, so either the deferred population is growing or the ` +
-        `comment is stale:\n  ${files.map((f) => relative(projectRoot, f)).join("\n  ")}`,
-    ).toBeLessThanOrEqual(16);
+      census.unresolved,
+      `${census.unresolved.length} wash pairing(s) could not be resolved, so ` +
+        `the census below is measuring less than it appears to:\n` +
+        census.unresolved.join("\n"),
+    ).toHaveLength(0);
   });
 
+  it("resolves every PALETTE pairing it forms, so the scan fails closed", () => {
+    // The fail-open this closes: an unlisted palette step used to be `continue`d
+    // past, which dropped the site from the population entirely, and because
+    // `worst` was still Infinity the pair was then filed as PASSING. An
+    // unreadable measurement was recorded as a clean one, and the disappearance
+    // read as the backlog shrinking — the one direction this guard must never be
+    // fooled in.
+    expect(
+      palette.unresolved,
+      `${palette.unresolved.length} palette pairing(s) could not be resolved, so ` +
+        `the palette census below is measuring less than it appears to:\n` +
+        palette.unresolved.join("\n"),
+    ).toHaveLength(0);
+  });
+
+  it("fails closed on a palette step the theme map does not contain", () => {
+    // Synthetic source, so the proof does not require editing a component to
+    // introduce a defect. `emerald-650` is not a Tailwind step, so the map has
+    // no entry and the pairing is undecidable.
+    const result = scanPaletteInSource({
+      tokensCss,
+      file: "src/Synthetic.tsx",
+      source: [
+        "export function Thing() {",
+        '  return <button className="bg-emerald-650 text-white">go</button>;',
+        "}",
+      ].join("\n"),
+      palette: tailwindPaletteMap(
+        readFileSync(
+          resolve(projectRoot, "node_modules/tailwindcss/theme.css"),
+          "utf-8",
+        ),
+      ),
+    });
+    expect(
+      result.unresolved.length,
+      "an unlisted palette step must be reported, not dropped",
+    ).toBe(1);
+    expect(result.unresolved[0]).toContain("bg-emerald-650");
+    expect(
+      [...result.failing, ...result.passing],
+      "and it must NOT be filed as a site in either direction — it was never " +
+        "measured, and recording it as passing is the fail-open being fixed",
+    ).toHaveLength(0);
+  });
+
+  it("fails closed on a palette pairing whose ink does not resolve", () => {
+    const result = scanPaletteInSource({
+      tokensCss,
+      file: "src/Synthetic.tsx",
+      source: [
+        "export function Thing() {",
+        '  return <button className="bg-red-600 text-[var(--no-such-token)]">x</button>;',
+        "}",
+      ].join("\n"),
+      palette: tailwindPaletteMap(
+        readFileSync(
+          resolve(projectRoot, "node_modules/tailwindcss/theme.css"),
+          "utf-8",
+        ),
+      ),
+    });
+    expect(result.unresolved.length).toBe(1);
+    expect(result.unresolved[0]).toContain("--no-such-token");
+    expect([...result.failing, ...result.passing]).toHaveLength(0);
+  });
+
+  it("keeps no NUL byte in its own source, so git does not treat it as binary", () => {
+    // A literal NUL once sat in a template delimiter here. It made `git diff`
+    // and `file` report this source as binary data, which quietly suppresses
+    // diffs and makes any review of it impossible. Cheap to assert, and the
+    // failure is otherwise silent.
+    const raw = readFileSync(__filename);
+    expect(
+      raw.includes(0),
+      "this file contains a NUL byte; git and `file` will classify it as " +
+        "binary, which hides diffs. Use an escaped or ordinary delimiter instead.",
+    ).toBe(false);
+  });
+
+  it("still separates failing from passing for the wash family, with no count", () => {
+    // Replaces `expect(census.failing.length).toBeLessThanOrEqual(15)`. An upper
+    // bound happens not to fail when a site is fixed, but it is still a number
+    // about the real population: it goes stale the moment someone fixes two sites
+    // and leaves a floor behind that no longer describes anything. The
+    // measurement it was protecting — that the wash family is really being
+    // judged and not merely counted — is checked here against source the test
+    // owns, and the real tree is left to the per-site pin.
+    const scan = (bg: string, fg: string) =>
+      scanWashesInSource({
+        tokensCss,
+        file: "src/Fixture.tsx",
+        source: `export const x = <span className="${bg} ${fg}" />;`,
+      });
+    const bad = scan(
+      "bg-[var(--color-accent)]/20",
+      "text-[var(--color-accent)]",
+    );
+    // A translucent wash that clears AA. A solid `--*-fill` / `--*-fill-fg` pair
+    // is deliberately outside this census — it is the FIXED form, not a site —
+    // so using one here would have asserted that the scanner ignores it, which
+    // is a different claim from the one being made.
+    const good = scan(
+      "bg-[var(--color-accent)]/5",
+      "text-[var(--color-text-primary)]",
+    );
+    expect(
+      bad.failing.map((s) => s.shape),
+      "a wash the tokens cannot clear is reported as failing",
+    ).toEqual(["bg-[var(--color-accent)]/20 + text-[var(--color-accent)]"]);
+    expect(
+      good.passing.map((s) => s.shape),
+      "a translucent wash that clears AA is reported as passing",
+    ).toEqual([
+      "bg-[var(--color-accent)]/5 + text-[var(--color-text-primary)]",
+    ]);
+    expect(
+      good.failing.length,
+      "and a passing form is absent from the deferred population entirely, " +
+        "which is the direction a fix moves in",
+    ).toBe(0);
+  });
+
+  it("still separates failing from passing for the palette family, with no count", () => {
+    // Replaces `expect(palette.failing.length).toBeLessThanOrEqual(11)`, on the
+    // same reasoning. The palette family is a separate queue from the wash
+    // family, so it is checked separately — a guard that covers one family and
+    // not the other is how the other one rots.
+    const scan = (bg: string, fg: string) =>
+      scanPaletteInSource({
+        tokensCss,
+        file: "src/Fixture.tsx",
+        source: `export const x = <span className="${bg} ${fg}" />;`,
+        palette: tailwindPaletteMap(
+          readFileSync(
+            resolve(projectRoot, "node_modules/tailwindcss/theme.css"),
+            "utf-8",
+          ),
+        ),
+      });
+    // red-600 is dark enough that white clears it; emerald-600 is not. Both
+    // directions are the same scanner, the same tokens file and the same ink
+    // literal, so the difference is the measurement, not the fixture.
+    const bad = scan("bg-emerald-600", "text-white");
+    const good = scan("bg-red-600", "text-white");
+    expect(
+      bad.failing.map((s) => s.shape),
+      "a raw palette background the ink cannot clear is reported as failing",
+    ).toEqual(["bg-emerald-600 + text-white"]);
+    expect(
+      good.passing.map((s) => s.shape),
+      "a palette pairing that clears AA is reported as passing",
+    ).toEqual(["bg-red-600 + text-white"]);
+    expect(
+      good.failing.length,
+      "and it is absent from the deferred population",
+    ).toBe(0);
+  });
+
+  it.each([
+    ["wash", WASH_SITE_PIN, () => census.failing],
+    ["palette", PALETTE_SITE_PIN, () => palette.failing],
+  ] as const)(
+    "accounts for every %s SITE against its own pin",
+    (family, pin, discovered) => {
+      const rows = siteFaults(discovered(), pin);
+      expect(
+        rows,
+        rows.length
+          ? describeSiteFaults(family, rows)
+          : `${family} sites fully accounted for`,
+      ).toHaveLength(0);
+    },
+  );
+
+  it("reuses a parsed file and rescans it when its text changes", () => {
+    // The performance contract, stated WITHOUT a clock. A timing assertion here
+    // would be a flake waiting for a busy machine; hit and miss counters are not.
+    //
+    // This matters because the guard parses real TSX for every file, and the
+    // integrated tests drive the full tree several times over. Before the cache
+    // each pass re-parsed every file, so the cost was multiplied by the number
+    // of passes and the suite ran into the per-test timeout under coverage.
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <span className="bg-[var(--color-accent)]/20 text-[var(--color-accent)]">A</span>',
+      "  );",
+      "}",
+    ].join("\n");
+
+    resetParseCache();
+    identityContext(source);
+    const afterFirst = parseCacheStats();
+    expect(
+      afterFirst.misses,
+      "the first parse of a file is real work and is counted as a miss",
+    ).toBe(1);
+    expect(afterFirst.hits, "and nothing was cached yet").toBe(0);
+
+    identityContext(source);
+    const afterSecond = parseCacheStats();
+    expect(
+      afterSecond.hits,
+      "the SAME text is served from cache — this is the reuse that stops the " +
+        "repeated full-tree passes from re-parsing unchanged files",
+    ).toBe(1);
+    expect(afterSecond.misses, "and no second parse happened").toBe(1);
+
+    // Invalidation: the key is the exact text, so ANY change is a different file
+    // as far as the cache is concerned. No hash, so no collision to reason about.
+    identityContext(`${source}\n// one more line`);
+    const afterEdit = parseCacheStats();
+    expect(
+      afterEdit.misses,
+      "changed content must be parsed again, or the guard would validate a stale " +
+        "tree and the override in the integrated tests would do nothing",
+    ).toBe(2);
+    expect(
+      afterEdit.hits,
+      "and the changed text is not served from the old entry",
+    ).toBe(1);
+
+    // And the original text is still cached, so an override that reverts is cheap.
+    identityContext(source);
+    expect(
+      parseCacheStats().hits,
+      "reverting to previously seen text hits the cache again",
+    ).toBe(2);
+
+    resetParseCache();
+  });
+
+  it("parses one file once for BOTH census families", () => {
+    // Each family used to build its own IdentityContext, so one file was parsed
+    // three times per validation pass: once here, once for washes, once for
+    // palette. Two of those are pure duplication, and the integrated tests drive
+    // the whole tree five times over.
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <span className="bg-[var(--color-accent)]/20 text-[var(--color-accent)]">A</span>',
+      '    <span className="bg-emerald-600 text-white">B</span>',
+      "  );",
+      "}",
+    ].join("\n");
+    const palette = tailwindPaletteMap(
+      readFileSync(
+        resolve(projectRoot, "node_modules/tailwindcss/theme.css"),
+        "utf-8",
+      ),
+    );
+
+    resetParseCache();
+    const wash = scanWashesInSource({
+      tokensCss,
+      file: "src/Widget.tsx",
+      source,
+    });
+    const pal = scanPaletteInSource({
+      tokensCss,
+      file: "src/Widget.tsx",
+      source,
+      palette,
+    });
+    const stats = parseCacheStats();
+    expect(
+      wash.failing.length + pal.failing.length,
+      "both families really did find something, so neither scan was a no-op",
+    ).toBeGreaterThan(0);
+    expect(
+      stats.misses,
+      "two scans of the SAME text is exactly one parse",
+    ).toBe(1);
+    expect(
+      stats.hits,
+      "and the second family was served the first family's parse",
+    ).toBe(1);
+    resetParseCache();
+  });
+
+  it("gives every CURRENT deferred occurrence an identity, and no id two elements", () => {
+    // Forward-only, deliberately. There is no aggregate count here and no count
+    // anywhere else in this file: a hard total of sites, elements or markers
+    // fails the moment a real site is FIXED, because the population is one
+    // smaller — which is the opposite of what the guard is for. The per-site pin
+    // replaces that floor: every current failing site must have a unique pinned
+    // identity and its own shape, and new identities, shape drift, ambiguity and
+    // missing identities all fail. A resolved site simply stops appearing.
+    for (const [family, sites] of [
+      ["wash", census.failing],
+      ["palette", palette.failing],
+    ] as const) {
+      const missing = sites.filter((x) => !x.siteId);
+      expect(
+        missing.length,
+        `${family}: ${missing.length} current occurrence(s) have no identity — a ` +
+          `deferred element with no marker and no static id is a site no pin can ` +
+          `protect`,
+      ).toBe(0);
+      // Whether a site's shapes match its pin is `siteFaults`' job and is
+      // checked there. Nothing here counts: a site MAY carry two shapes (four
+      // do, pairing `bg-emerald-600` with its `hover:bg-emerald-500`), and the
+      // population is expected to shrink every time a site is fixed.
+    }
+  });
+
+  it("integrated: a fixed site leaves a stale pin and the full validation still passes", () => {
+    // The real contract is one-directional, and this proves it through the SAME
+    // path the guard runs: scan every component, resolve identities, collect
+    // ownership faults, check every current site against its pin. The previous
+    // version of this test only called `siteFaults` on census rows it had filtered
+    // by hand, which could not see an identity fault or an unresolved pairing and
+    // so could not fail when a fixed site was reported as an orphan marker.
+    //
+    // The site is real: `price-hero-margin-label` in PriceHeroCard.tsx, a wash
+    // whose shape no other site holds, so resolving it is a genuine drop in the
+    // population and not a reshuffle.
+    const file = resolve(
+      srcRoot,
+      "shared/components/Results/PriceHeroCard.tsx",
+    );
+    const before = validateRealTree(WASH_SITE_PIN, PALETTE_SITE_PIN);
+    expect(
+      before.faults,
+      `the unmodified tree must validate, or this test proves nothing:\n${before.faults.join("\n")}`,
+    ).toEqual([]);
+
+    // Fix the site the way a real fix looks: migrate the element to a solid,
+    // token-backed fill with its paired foreground, and KEEP the marker. The
+    // marker is what the stale pin entry is anchored to, so a fix does not and
+    // must not delete it.
+    const source = readFileSync(file, "utf-8");
+    const from = "bg-[var(--accent)]/15 text-[var(--accent)]";
+    const to = "bg-[var(--accent-fill)] text-[var(--accent-fill-fg)]";
+    expect(
+      source.includes(from),
+      "the site under test still has its deferred class, so the mutation applies",
+    ).toBe(true);
+    const fixed = source.replace(from, to);
+    expect(
+      fixed.includes("{/* contrast-site: price-hero-margin-label */}"),
+      "the marker survives the fix",
+    ).toBe(true);
+
+    const after = validateRealTree(
+      WASH_SITE_PIN,
+      PALETTE_SITE_PIN,
+      new Map([[file, fixed]]),
+    );
+    expect(
+      after.active,
+      `the fixed site left the active census: ${before.active} -> ${after.active}`,
+    ).toBe(before.active - 1);
+    expect(
+      after.faults,
+      `and the FULL validation passes with a stale pin entry present:\n${after.faults.join("\n")}`,
+    ).toEqual([]);
+    expect(
+      WASH_SITE_PIN["price-hero-margin-label"],
+      "the pin entry for the resolved site is still there — the accepted cost of " +
+        "a forward-only pin, and why no reverse-presence assertion may exist",
+    ).toEqual(["bg-[var(--accent)]/15 + text-[var(--accent)]"]);
+  });
+
+  it("integrated: the same path still fails a new site nobody pinned", () => {
+    // The other direction must not weaken. A brand-new deferred element with a
+    // fresh identity is not in the pin, and the integrated path has to say so.
+    const file = resolve(
+      srcRoot,
+      "shared/components/Results/PriceHeroCard.tsx",
+    );
+    const source = readFileSync(file, "utf-8");
+    const injected = source.replace(
+      "</div>\n      )}",
+      [
+        "        {/* contrast-site: brand-new-site */}",
+        '        <span className="bg-[var(--accent)]/15 text-[var(--accent)]">new</span>',
+        "      </div>",
+        "      )}",
+      ].join("\n"),
+    );
+    expect(injected, "the injection applied").not.toBe(source);
+    const found = validateRealTree(
+      WASH_SITE_PIN,
+      PALETTE_SITE_PIN,
+      new Map([[file, injected]]),
+    );
+    expect(
+      found.faults.join("\n"),
+      "a new identity with no pin entry is a fault, named",
+    ).toContain("brand-new-site");
+    expect(
+      found.faults.join("\n"),
+      "and the kind is the pin's, not an identity fault",
+    ).toContain("unpinned");
+  });
+
+  it("integrated: the same path still fails a CURRENT site whose shape changed", () => {
+    // Shape drift on a real, owned site: the identity is unchanged, so the pin
+    // entry still matches by name, but the pinned shape is gone.
+    const file = resolve(
+      srcRoot,
+      "shared/components/Results/PriceHeroCard.tsx",
+    );
+    const source = readFileSync(file, "utf-8");
+    const drifted = source.replace(
+      "bg-[var(--accent)]/15 text-[var(--accent)]",
+      "bg-[var(--accent)]/20 text-[var(--accent)]",
+    );
+    expect(drifted, "the mutation applied").not.toBe(source);
+    const found = validateRealTree(
+      WASH_SITE_PIN,
+      PALETTE_SITE_PIN,
+      new Map([[file, drifted]]),
+    );
+    expect(
+      found.faults.join("\n"),
+      "the pin names the site and the shape it no longer has",
+    ).toContain("price-hero-margin-label");
+    expect(found.faults.join("\n")).toContain("changedForm");
+  });
+
+  it("still fails a CURRENT site whose shape no longer matches its pin", () => {
+    // The unit-level version of the same rule, on a fixture.
+    const drifted = [
+      {
+        siteId: Object.keys(WASH_SITE_PIN)[0],
+        shape: "bg-[var(--z)]/90 + text-[var(--z)]",
+      },
+    ];
+    expect(
+      siteFaults(drifted, {
+        [Object.keys(WASH_SITE_PIN)[0]]: ["bg-[var(--x)]/20 + text-[var(--x)]"],
+      }).map((f) => f.kind),
+    ).toEqual(["changedForm"]);
+  });
+
+  it("resolves the Tailwind palette it measures palette pairings against", () => {
+    // If Tailwind's theme format changed, the palette map would come back empty
+    // and the census would report ZERO failures, which reads as the whole queue
+    // being fixed. So the decoder is pinned against the two conversions whose
+    // provenance tokens.css writes down, and the map is required to be populated.
+    for (const [step, expected] of PALETTE_SELF_CHECK) {
+      expect(
+        tailwindPaletteMap(
+          readFileSync(
+            resolve(projectRoot, "node_modules/tailwindcss/theme.css"),
+            "utf-8",
+          ),
+        ).get(step),
+        `${step} must decode to ${expected} — tokens.css documents that value ` +
+          `as "the sRGB rendering of Tailwind v4's oklch palette". If Tailwind ` +
+          `changed the format, the palette scan is deciding nothing.`,
+      ).toBe(expected);
+    }
+  });
+});
+
+/**
+ * The defect a file count cannot see, stated as an executable example.
+ *
+ * This is the finding that motivated re-measuring the floor, kept as a test
+ * because it is cheap and it is the part most likely to be forgotten: the two
+ * populations below describe the SAME file before and after a site is migrated
+ * from one broken form to a different broken form. The file count is identical
+ * in both, so any floor expressed in files reports the migration as neutral.
+ *
+ * The shape set differs too, and once a floor over it was proposed — then
+ * removed, because a fix also removes a shape and a floor over the shape set
+ * punishes a fix for the same reason a floor over files did. The assertions
+ * here are therefore directional: the pin names the site that changed, and a
+ * resolved site is accepted with a stale entry. Nothing here counts.
+ */
+describe("a file count cannot see a site change form; the pin can, and nothing counts", () => {
+  interface Population {
+    /** one entry per SITE, as [file, line, shape] */
+    sites: Array<[string, number, string]>;
+  }
+
+  const BEFORE: Population = {
+    sites: [
+      [
+        "src/Thing.tsx",
+        10,
+        "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+      ],
+      [
+        "src/Thing.tsx",
+        20,
+        "bg-[var(--color-accent)]/20 + text-[var(--color-text-primary)]",
+      ],
+      [
+        "src/Other.tsx",
+        5,
+        "bg-[var(--color-danger)]/90 + text-[var(--color-text-primary)]",
+      ],
+    ],
+  };
+
+  /**
+   * The same three sites, one of them migrated to a different broken form.
+   *
+   * The three BEFORE shapes are deliberately all DISTINCT. With two sites
+   * sharing a shape, rewriting one of them leaves the shape SET unchanged, so
+   * the example would not demonstrate what it claims — which is the same reason
+   * a shape list cannot be used alone as a floor.
+   */
+  const AFTER: Population = {
+    sites: [
+      [
+        "src/Thing.tsx",
+        10,
+        "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+      ],
+      [
+        "src/Thing.tsx",
+        20,
+        "bg-[var(--color-success)]/80 + text-[var(--color-text-primary)]",
+      ],
+      [
+        "src/Other.tsx",
+        5,
+        "bg-[var(--color-danger)]/90 + text-[var(--color-text-primary)]",
+      ],
+    ],
+  };
+
+  const filesOf = (p: Population): string[] =>
+    [...new Set(p.sites.map(([file]) => file))].sort();
+  /** the pin's shape, as the census reports it */
+  const sitesOf = (p: Population): Array<{ siteId: string; shape: string }> =>
+    p.sites.map(([file, line, shape]) => ({
+      siteId: `${file}:${line}`,
+      shape,
+    }));
+
+  it("leaves the file count untouched, which is why the old floor hid this", () => {
+    // Not a claim — an assertion, and it is about the fixture only, so it cannot
+    // fail when a real site is fixed. This is the behaviour that made a
+    // file-count floor report green while a site was rewritten into a different
+    // failure, which is why the replacement is not another count.
+    expect(filesOf(AFTER)).toEqual(filesOf(BEFORE));
+  });
+
+  it("the pin names the site whose form moved, which no count ever could", () => {
+    // This replaces the assertion that the shape SET moved, which existed to
+    // justify a floor over that set. There is no such floor any more — a floor
+    // over the shape set punishes a fix exactly like a floor over the file
+    // count did, because a fix removes a shape. What survives is the directional
+    // check, and it is the stronger of the two: it says WHICH site changed, not
+    // merely that some shape went away and another arrived.
+    const pin = {
+      "src/Thing.tsx:10": [
+        "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+      ],
+      "src/Thing.tsx:20": [
+        "bg-[var(--color-accent)]/20 + text-[var(--color-text-primary)]",
+      ],
+      "src/Other.tsx:5": [
+        "bg-[var(--color-danger)]/90 + text-[var(--color-text-primary)]",
+      ],
+    };
+    expect(
+      siteFaults(sitesOf(BEFORE), pin),
+      "before the migration every site matches its own pin",
+    ).toEqual([]);
+    expect(
+      siteFaults(sitesOf(AFTER), pin).map((f) => `${f.siteId}:${f.kind}`),
+      "after it, the migrated site is named — a file count would have reported " +
+        "the two populations as identical, and a shape count only that the set " +
+        "moved, without saying which site moved",
+    ).toEqual(["src/Thing.tsx:20:changedForm"]);
+  });
+
+  it("a resolved site leaves a stale pin entry and is accepted, not counted", () => {
+    // This replaces the assertion that a fixed site makes the count FALL, which
+    // was the argument for keeping a floor. The pin does not need the count to
+    // fall, so the claim to test is the one that matters: a site that is gone
+    // from the population is not a fault, and its pin entry is simply left
+    // behind. Same property the integrated real-tree test proves, stated here on
+    // a fixture where the before/after is legible.
+    const pin = {
+      "src/Thing.tsx:10": [
+        "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]",
+      ],
+      "src/Thing.tsx:20": [
+        "bg-[var(--color-accent)]/20 + text-[var(--color-text-primary)]",
+      ],
+      "src/Other.tsx:5": [
+        "bg-[var(--color-danger)]/90 + text-[var(--color-text-primary)]",
+      ],
+    };
+    // One of the three sites resolves; the other two are untouched.
+    const RESOLVED: Population = { sites: BEFORE.sites.slice(1) };
+    expect(
+      siteFaults(sitesOf(RESOLVED), pin),
+      "one site resolved and two left: no fault, and both survivors still " +
+        "match their own pins",
+    ).toEqual([]);
+    expect(
+      Object.keys(pin).length,
+      "the pin still lists all three sites, including the resolved one — that " +
+        "stale entry is the accepted cost of a forward-only pin, and no " +
+        "assertion here requires it to disappear",
+    ).toBe(3);
+  });
+});
+
+describe("guard coverage limits, asserted so they stay honest", () => {
   it("keeps no raw Tailwind palette background behind a dialog variant", () => {
     // The specific defect this branch fixed: theme-independent `bg-red-600` /
     // `bg-amber-600` behind a theme-flipping ink. Asserted on the dialog
@@ -609,5 +1761,520 @@ describe("guard coverage limits, asserted so they stay honest", () => {
           `behind a theme-flipping ink again`,
       ).toBe(false);
     }
+  });
+});
+
+/**
+ * The regression the per-site pin exists for, driven through the REAL scanner.
+ *
+ * Every earlier version of this proof passed fabricated identifiers straight
+ * into the comparison function, so it never exercised the parsing that decides
+ * which element a pairing belongs to. These go through
+ * `scanWashesInSource` on real source text, so the marker syntax, the
+ * expression-position comment form, the tag scan and the ownership rule are all
+ * under test rather than assumed.
+ */
+describe("the site pin, through the real scanner", () => {
+  const projectRoot = resolve(__dirname, "../..", "..");
+  const tokensCss = readFileSync(
+    resolve(projectRoot, "src/styles/tokens.css"),
+    "utf-8",
+  );
+
+  const SHAPE = "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]";
+  const OTHER = "bg-[var(--accent)]/20 + text-[var(--accent)]";
+
+  /** Two marked siblings inside ONE declaration, as the real tree has them. */
+  function fixture(shapeA: string, shapeB: string): string {
+    return [
+      "export function Widget({ a, b }: { a: string; b: string }) {",
+      "  return (",
+      '    <div className="flex gap-2">',
+      "      {/* contrast-site: site-a */}",
+      `      <span className="${shapeA}">A</span>`,
+      "      {/* contrast-site: site-b */}",
+      `      <span className="${shapeB}">B</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+  }
+
+  function sites(
+    source: string,
+  ): Array<{ siteId: string | null; shape: string }> {
+    return scanWashesInSource({
+      tokensCss,
+      file: "src/Widget.tsx",
+      source,
+    }).failing.map((s) => ({ siteId: s.siteId, shape: s.shape }));
+  }
+
+  const PIN: Record<string, string[]> = {
+    "site-a": [SHAPE],
+    "site-b": [OTHER],
+  };
+
+  it("resolves two marked siblings in one declaration to their own identities", () => {
+    expect(sites(fixture(SHAPE, OTHER))).toEqual([
+      { siteId: "site-a", shape: SHAPE },
+      { siteId: "site-b", shape: OTHER },
+    ]);
+  });
+
+  it("catches the same-shape move between two elements in ONE declaration", () => {
+    // The substitution a position-based key cannot see. Shape X leaves element
+    // A and appears on element B. B now holds two occurrences, A holds none.
+    // The file's total shape multiset and its pairing count both change, so this
+    // is the strict version — the same-multiset case is the next test.
+    const moved = sites(fixture(OTHER, `${SHAPE} ${SHAPE}`));
+    const rows = siteFaults(moved, PIN);
+    expect(
+      rows.map((r) => `${r.siteId}:${r.kind}`).sort(),
+      "the move must be reported against the site that lost the shape",
+    ).toEqual(["site-a:changedForm", "site-b:changedForm"]);
+  });
+
+  it("catches a swap that keeps the file's shape multiset and count identical", () => {
+    // The precise case the review named: A holds X, B holds Y; afterwards A
+    // holds Y and B holds X. Same two shapes, same count, same declaration —
+    // and a `decl#ordinal` or global-shape pin sees nothing at all, because
+    // neither the ordinals nor the shape set moved.
+    const before = sites(fixture(SHAPE, OTHER));
+    expect(siteFaults(before, PIN)).toHaveLength(0);
+
+    const after = sites(fixture(OTHER, SHAPE));
+    expect(
+      after.map((s) => s.shape).sort(),
+      "the file's shape multiset is unchanged by the swap",
+    ).toEqual(before.map((s) => s.shape).sort());
+    expect(after.length, "and so is its pairing count").toBe(before.length);
+
+    const rows = siteFaults(after, PIN);
+    expect(
+      rows.map((r) => `${r.siteId}:${r.kind}`).sort(),
+      "yet both sites changed form, and both are named",
+    ).toEqual(["site-a:changedForm", "site-b:changedForm"]);
+  });
+
+  it("catches a new element with an identity nobody pinned", () => {
+    const rows = siteFaults(sites(fixture(SHAPE, OTHER)), {
+      "site-a": [SHAPE],
+    });
+    expect(rows.map((r) => `${r.siteId}:${r.kind}`)).toEqual([
+      "site-b:unpinned",
+    ]);
+  });
+
+  it("catches a deferred element with no identity at all", () => {
+    const source = [
+      "export function Widget() {",
+      "  return (",
+      '    <div className="flex">',
+      `      <span className="${SHAPE}">A</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const rows = siteFaults(sites(source), PIN);
+    expect(rows.map((r) => r.kind)).toEqual(["unidentified"]);
+  });
+
+  it("catches two elements claiming one identity", () => {
+    const source = [
+      "export function Widget() {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: site-a */}",
+      `      <span className="${SHAPE}">A</span>`,
+      "      {/* contrast-site: site-a */}",
+      `      <span className="${SHAPE}">A again</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    // Both occurrences carry the same id and the same shape, so the pin's
+    // per-site comparison cannot see the collision — the scanner-level check is
+    // what has to catch it, by counting identities per file.
+    const found = sites(source);
+    expect(found.map((s) => s.siteId)).toEqual(["site-a", "site-a"]);
+    const ids = siteMarkers(source).map((m) => m.id);
+    expect(
+      ids.length === new Set(ids).size,
+      "two markers share an id, which must be reported rather than merged",
+    ).toBe(false);
+  });
+
+  it("resolves an identity in expression position, where the JSX form cannot go", () => {
+    // `{x ? (` puts the element inside a parenthesised EXPRESSION, where
+    // `{/* … */}` is an object literal rather than a comment. The plain form has
+    // to work there or the file does not parse at all.
+    const source = [
+      "export function Widget({ on }: { on: boolean }) {",
+      "  return (",
+      '    <div className="flex">',
+      "      {on ? (",
+      "        /* contrast-site: gated-item */",
+      `        <span className="${SHAPE}">A</span>`,
+      "      ) : null}",
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    expect(sites(source)).toEqual([{ siteId: "gated-item", shape: SHAPE }]);
+  });
+
+  it("keeps identity stable when the site moves down the file", () => {
+    // Line numbers are not identity. Reformatting above the site, and the site
+    // itself moving, must not change which element it belongs to.
+    const before = sites(fixture(SHAPE, OTHER));
+    const shifted = fixture(SHAPE, OTHER)
+      .split("\n")
+      .map((l, i) => (i < 3 ? `// padding ${i}` : l))
+      .join("\n");
+    expect(
+      sites(shifted),
+      "adding lines above the site must not change any identity",
+    ).toEqual(before);
+    expect(
+      sites(fixture(SHAPE, OTHER).replace("  <span", "    <span")),
+      "reindenting the element must not change any identity",
+    ).toEqual(before);
+  });
+
+  it("reuses an existing static data-testid instead of demanding a marker", () => {
+    const source = [
+      "export function Widget() {",
+      "  return (",
+      '    <div className="flex">',
+      `      <span data-testid="thumb" className="${SHAPE}">A</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    expect(sites(source)).toEqual([
+      { siteId: "data-testid=thumb", shape: SHAPE },
+    ]);
+  });
+
+  it("does not accept a dynamic data-testid as identity", () => {
+    const source = [
+      "export function Widget({ v }: { v: string }) {",
+      "  return (",
+      '    <div className="flex">',
+      `      <span data-testid={\`badge-\${v}\`} className="${SHAPE}">A</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    expect(
+      sites(source).map((s) => s.siteId),
+      "a per-render test id names no single source site, so it is not identity",
+    ).toEqual([null]);
+  });
+});
+
+/**
+ * Ownership, proven by DURABLE tests through the production identity path.
+ *
+ * The previous pass reported mutation proof for these cases, and the committed
+ * tests did not support that claim: they asserted that a FIXTURE contained two
+ * identical strings, and that the clean tree held a certain number of sites.
+ * Neither says anything about whether the guard rejects the malformed source.
+ * Every test below therefore drives `scanWashesInSource` plus the real
+ * `identityFaults`, and asserts on the faults the production code produces.
+ *
+ * They are written to fail if ownership ever becomes last-writer-wins, or if
+ * orphan checking is removed — which is checked by mutation in the commit that
+ * introduced them, and re-checkable at any time.
+ */
+describe("marker ownership, through the production identity path", () => {
+  const projectRoot = resolve(__dirname, "../..", "..");
+  const tokensCss = readFileSync(
+    resolve(projectRoot, "src/styles/tokens.css"),
+    "utf-8",
+  );
+
+  const X = "bg-[var(--color-accent)]/20 + text-[var(--color-accent)]";
+  const Y = "bg-[var(--accent)]/20 + text-[var(--accent)]";
+
+  /**
+   * The production path: scan, then read the faults the scan actually produced.
+   * `ctxFor` replays the scan's own resolutions so the recorded claims are the
+   * ones a real scan made, rather than a separate guess.
+   */
+  function inspect(source: string) {
+    const scan = () =>
+      scanWashesInSource({ tokensCss, file: "src/Widget.tsx", source });
+    const result = scan();
+    const ctx = identityContext(source);
+    for (const site of result.failing) resolveSiteId(ctx, site.offset);
+    return {
+      sites: result.failing.map((s) => ({ siteId: s.siteId, shape: s.shape })),
+      unresolved: result.unresolved,
+      faults: identityFaults(ctx),
+    };
+  }
+
+  const kinds = (f: { kind: string }[]): string[] =>
+    f.map((x) => x.kind).sort();
+
+  it("a marker names only the element immediately after it, and is consumed once", () => {
+    // THE leak this replaces. Under nearest-preceding-marker resolution the
+    // second element inherited the first's identity and both looked healthy.
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: first */}",
+      `      <span className="${X}">A</span>`,
+      `      <span className="${X}">B has no marker of its own</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(
+      found.faults,
+      "both elements hold a deferred pairing, so the marker is consumed and " +
+        "the second element simply has no identity — which the guard reports",
+    ).toEqual([]);
+    expect(
+      found.sites.map((s) => s.siteId),
+      "the second element must NOT inherit the first's identity",
+    ).toEqual(["first", null]);
+    expect(
+      kinds(siteFaults(found.sites, { first: [X] })),
+      "and an un-named deferred element is a finding, not a silent merge",
+    ).toEqual(["unidentified"]);
+  });
+
+  it("does NOT orphan a marker whose element is no longer deferred, and does not leak it", () => {
+    // A FIXED site looks exactly like this: the element was migrated to a
+    // token-backed fill, so it holds no deferred pairing, the marker stayed, and
+    // the population is one smaller. Reporting that as a fault would mean the
+    // guard failed whenever a site was fixed.
+    //
+    // The other half matters just as much and is the reason this is a test: the
+    // later element must NOT inherit the earlier marker. That is guaranteed
+    // structurally — a marker is bound to the next JSX element and only to it —
+    // so the later pairing comes back with no identity and is a finding under the
+    // pin instead.
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: resolved */}",
+      '      <span className="px-2 py-1 rounded-full">plain</span>',
+      `      <span className="${X}">deferred</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(
+      kinds(found.faults),
+      "a marker on a FIXED element is not an orphan, and a marker followed by " +
+        "no element at all is a different case",
+    ).toEqual([]);
+    expect(
+      found.sites.map((s) => s.siteId),
+      "the later deferred element gets no identity — the earlier marker cannot " +
+        "be inherited",
+    ).toEqual([null]);
+    expect(
+      kinds(siteFaults(found.sites, { resolved: [X] })),
+      "so the pin reports it as a new, unpinned site, which is the correct fault",
+    ).toEqual(["unidentified"]);
+  });
+
+  it("rejects two markers claiming one element as ambiguous", () => {
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: one */}",
+      "      {/* contrast-site: two */}",
+      `      <span className="${X}">A</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(kinds(found.faults)).toEqual(["ambiguousMarker"]);
+    expect(
+      found.faults[0].detail,
+      "and it must name BOTH markers and the element they fight over",
+    ).toMatch(/both claim the element/);
+  });
+
+  it("rejects a duplicate marker id on two different elements", () => {
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: same */}",
+      `      <span className="${X}">A</span>`,
+      "      {/* contrast-site: same */}",
+      `      <span className="${X}">B</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(
+      kinds(found.faults),
+      "one id, one element — and the shapes here are identical, so nothing " +
+        "downstream could tell this from the healthy case",
+    ).toEqual(["duplicateIdentity"]);
+    expect(found.faults[0].identity).toBe("same");
+  });
+
+  it("rejects a static attribute reused on two elements", () => {
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <div className="flex">',
+      `      <span data-testid="dup" className="${X}">A</span>`,
+      `      <span data-testid="dup" className="${Y}">B</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(kinds(found.faults)).toEqual(["duplicateIdentity"]);
+    expect(found.faults[0].identity).toBe("data-testid=dup");
+  });
+
+  it("does not let a quoted string posing as a tag own a marker", () => {
+    // The decoy. `"<span>"` inside a string literal LOOKS like a JSX opening
+    // element to a regex, so a marker above it was bound to a node that does not
+    // exist: the marker looked owned, nothing was reported, and the census
+    // carried a site backed by nothing. Under real TSX syntax recognition the
+    // string is a string, so the marker owns nothing — which is the orphan case.
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: decoy */}",
+      '      {"<span>"}',
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(
+      kinds(found.faults),
+      "a string that looks like a tag is not an element, so the marker owns " +
+        "nothing and is an orphan",
+    ).toEqual(["orphanMarker"]);
+    expect(found.faults[0].detail).toMatch(/no JSX\s+element at all/);
+  });
+
+  it("binds a marker past a decoy string to the REAL element that follows it", () => {
+    // The other half, and the reason the fix cannot be "skip anything that looks
+    // like a tag": a decoy must not STOP the search, and must not BECOME the
+    // owner. Nothing here is a real element until the `<span>`, so the marker has
+    // to reach past the string to find it — and land there exactly once.
+    const source = [
+      "export function W({ hint }: { hint: string }) {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: after-decoy */}",
+      '      {"<span>"}',
+      `      <span className="${X}">{hint}</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(
+      found.faults,
+      "the marker lands on the real element, which is deferred, so there is " +
+        "nothing wrong to report — and the decoy is not an orphan either",
+    ).toEqual([]);
+    expect(
+      found.sites.map((x) => x.siteId),
+      "and it is the real element that carries the identity, once — not the " +
+        "string, and not both",
+    ).toEqual(["after-decoy"]);
+  });
+
+  it("rejects a marker followed by no element at all", () => {
+    const source = [
+      "export function W() {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: dangling */}",
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = inspect(source);
+    expect(kinds(found.faults)).toEqual(["orphanMarker"]);
+    expect(found.faults[0].detail).toMatch(/no JSX\s+element at all/);
+  });
+
+  it("keeps the marked A/B same-declaration swap failing on both sites", () => {
+    // Preserved from the accepted work: two marked siblings in one declaration,
+    // swapped. The file's shape multiset and pairing count are unchanged, so
+    // only a per-site key can see it.
+    const before = [
+      "export function W({ a, b }: { a: string; b: string }) {",
+      "  return (",
+      '    <div className="flex">',
+      "      {/* contrast-site: site-a */}",
+      `      <span className="${X}">A</span>`,
+      "      {/* contrast-site: site-b */}",
+      `      <span className="${Y}">B</span>`,
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const pin = { "site-a": [X], "site-b": [Y] };
+    expect(inspect(before).faults).toEqual([]);
+    expect(siteFaults(inspect(before).sites, pin)).toEqual([]);
+
+    const after = before
+      .replace(
+        `<span className="${X}">A</span>`,
+        `<span className="${Y}">A</span>`,
+      )
+      .replace(
+        `<span className="${Y}">B</span>`,
+        `<span className="${X}">B</span>`,
+      );
+    const moved = inspect(after);
+    expect(
+      moved.sites.map((s) => s.shape).sort(),
+      "the shape multiset is unchanged by the swap",
+    ).toEqual(
+      inspect(before)
+        .sites.map((s) => s.shape)
+        .sort(),
+    );
+    expect(
+      moved.faults,
+      "and the swap produces no identity fault at all",
+    ).toEqual([]);
+    expect(
+      siteFaults(moved.sites, pin)
+        .map((f) => `${f.siteId}:${f.kind}`)
+        .sort(),
+      "so the PIN is what catches it, naming both sites",
+    ).toEqual(["site-a:changedForm", "site-b:changedForm"]);
+  });
+
+  it("holds across the real tree: every current site pinned, no ownership fault", () => {
+    // Integrity of the parser and the validation path against REAL source. This
+    // asserts nothing about how many sites exist: the population is expected to
+    // shrink every time a site is fixed, so any count here would be a floor
+    // that punishes progress. What must hold is that the scan resolves, every
+    // current site matches its own pin, and no identity is ambiguous.
+    const found = validateRealTree(WASH_SITE_PIN, PALETTE_SITE_PIN);
+    expect(
+      found.faults,
+      `${found.faults.length} fault(s) in the real tree:\n${found.faults.join("\n")}`,
+    ).toEqual([]);
   });
 });

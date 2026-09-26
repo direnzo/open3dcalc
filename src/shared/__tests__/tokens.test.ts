@@ -278,6 +278,274 @@ describe("status variant fills (danger / warning) are theme-independent", () => 
   }
 });
 
+describe("toast fills are theme-independent, and paired with their own ink", () => {
+  /**
+   * The third member of the `--*-fill` / `--*-fill-fg` family, and the one the
+   * Toast needed. The toast shipped `bg-[var(--color-success)]/90
+   * text-[var(--color-text-primary)]`: a FOREGROUND token used as a backdrop
+   * behind an ink that flips to near-white in .dark, which is the identical
+   * structural defect --danger-fill already removed from ConfirmDialog.
+   *
+   * These are the token-level half of that fix. The call-site half — that the
+   * toast actually paints these pairs, and that each clears AA — is
+   * accentBackgroundContrast.test.ts, which reads Toast.tsx rather than
+   * restating it. This block exists so a ONE-THEME edit to these tokens fails,
+   * which is the failure the call-site guard cannot see: it resolves each theme
+   * independently and would happily report both as passing if only one moved to
+   * a value that happened to work.
+   */
+  const FILLS = [
+    { name: "danger", fill: "danger-fill", fg: "danger-fill-fg" },
+    { name: "positive", fill: "positive-fill", fg: "positive-fill-fg" },
+    { name: "accent", fill: "accent-fill", fg: "accent-fill-fg" },
+  ] as const;
+
+  for (const v of FILLS) {
+    it.each([
+      [":root", "light"],
+      [".dark", "dark"],
+    ])(`keeps --${v.fill} legible with --${v.fg} in %s`, (block) => {
+      const ratio = contrastRatio(
+        tokenInBlock(tokensCss, block, v.fg),
+        tokenInBlock(tokensCss, block, v.fill),
+      );
+      expect(
+        ratio,
+        `--${v.fg} on --${v.fill} in ${block} is ${ratio.toFixed(2)}:1 — the ` +
+          `toast paints this exact pair and needs >= ${AA_NORMAL_TEXT}:1 ` +
+          `(WCAG 1.4.3)`,
+      ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    });
+
+    it.each([
+      [":root", "light"],
+      [".dark", "dark"],
+    ])(`keeps --${v.fill} and --${v.fg} identical in %s`, (block) => {
+      // The backdrop was theme-independent before it was tokenised, so it must
+      // not start depending on the theme now. Only the INK is allowed to be
+      // chosen per variant — and here it is a literal in both blocks, so
+      // neither moves. A one-theme edit is the exact regression this catches.
+      expect(
+        tokenInBlock(tokensCss, block, v.fill),
+        `--${v.fill} must not differ between themes`,
+      ).toBe(tokenInBlock(tokensCss, ":root", v.fill));
+      expect(
+        tokenInBlock(tokensCss, block, v.fg),
+        `--${v.fg} must not differ between themes; a flipping ink on a ` +
+          `theme-independent backdrop is the defect this family exists to remove`,
+      ).toBe(tokenInBlock(tokensCss, ":root", v.fg));
+    });
+
+    it(`keeps --${v.fill} a literal in both themes, not a themed alias`, () => {
+      // If --positive-fill were `var(--positive)` it would become #34d399 in
+      // .dark — a light green behind white text — and the call-site guard would
+      // catch that, but only for the one theme it broke in. A literal is what
+      // makes "theme-independent" a property of the declaration.
+      for (const block of [":root", ".dark"]) {
+        expect(
+          tokenInBlock(tokensCss, block, v.fill),
+          `--${v.fill} must be a hex literal in ${block}`,
+        ).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+    });
+  }
+
+  it("keeps every toast fill distinguishable from BOTH canvases (WCAG 1.4.11)", () => {
+    // A toast is `fixed` over arbitrary content, so its body is a non-text
+    // boundary as well as a text background: if the fill matches what is behind
+    // it, the toast's edge disappears even when the text on it is legible. The
+    // canvases are the two surfaces it is anchored against.
+    for (const v of FILLS) {
+      const fill = tokenInBlock(tokensCss, ":root", v.fill);
+      for (const [canvas, block] of [
+        ["--surface-canvas", ":root"],
+        ["--surface-canvas", ".dark"],
+      ] as const) {
+        const ratio = contrastRatio(
+          fill,
+          tokenInBlock(tokensCss, block, canvas.replace("--", "")),
+        );
+        expect(
+          ratio,
+          `--${v.fill} ${fill} against ${canvas} in ${block} is ` +
+            `${ratio.toFixed(2)}:1 — a toast that matches its own backdrop has ` +
+            `no visible edge (WCAG 1.4.11 needs >= ${AA_NON_TEXT}:1)`,
+        ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+      }
+    }
+  });
+
+  it("keeps the three toast fills distinct, so a failure reads as a failure", () => {
+    // The toast has no hover state, so variant colour is its ONLY state
+    // distinction. If two fills converge, error and success stop being
+    // tellable apart — and every contrast assertion in this file would still
+    // pass, because legibility and distinctness are different properties.
+    const fills = FILLS.map((v) =>
+      tokenInBlock(tokensCss, ":root", v.fill).toLowerCase(),
+    );
+    expect(new Set(fills).size, `toast fills must differ: ${fills}`).toBe(3);
+  });
+
+  it("gives every toast fill and ink a consumer in Toast.tsx", () => {
+    // A declared token with no call site is how --accent-fill shipped unused for
+    // a whole stage. Assert the consumer directly, through the --color-* alias
+    // the component is required to use.
+    const toast = read("shared/components/ui/Toast.tsx");
+    for (const v of FILLS) {
+      for (const token of [v.fill, v.fg]) {
+        expect(
+          toast.includes(`var(--color-${token})`),
+          `--${token} must be consumed by the toast via its --color-* alias`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("keeps the toast off a foreground token, which is what it was", () => {
+    // Named regression, because these are plausible token names and the broken
+    // spelling is the shorter one. The toast's whole defect was painting
+    // `--color-success` / `--color-danger` / `--color-accent` — FOREGROUND
+    // tokens — as a backdrop.
+    const toast = read("shared/components/ui/Toast.tsx");
+    const code = toast
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    for (const foreground of [
+      "--color-accent",
+      "--color-danger",
+      "--color-success",
+    ]) {
+      expect(
+        new RegExp(`bg-\\[var\\(${foreground}\\)\\]`).test(code),
+        `${foreground} is back in the toast's code as a BACKGROUND; the -fill ` +
+          `tokens exist precisely so a foreground-weight token never sits ` +
+          `behind an ink again`,
+      ).toBe(false);
+    }
+  });
+});
+
+describe("the two-tone focus indicator is theme-independent and non-flipping", () => {
+  /**
+   * A focus indicator that has to work on an arbitrary backdrop cannot be one
+   * colour, and the Toast is the case that proves it.
+   *
+   * The shipped ring was `focus-visible:ring-[var(--color-accent)]/50` with
+   * `focus-visible:outline-none`. In light theme `--color-accent` is #4f46e5
+   * and the info fill `--color-accent-fill` is ALSO #4f46e5, so the half-alpha
+   * ring composited to exactly its own fill: 1.00:1. The browser's fallback
+   * outline, which would have shown, was explicitly switched off. A keyboard
+   * user focusing the close button got nothing drawn.
+   *
+   * Two tones fix it in a way one cannot. The LIGHT ring sits on the fill, which
+   * is saturated in every variant, and clears 4.77:1-6.29:1. The DARK offset is
+   * the only part that can meet a page surface, and clears 17:1-20:1 against the
+   * light ones. Each theme is therefore carried by whichever tone its surface
+   * needs, and the pair is legible against each other in both.
+   *
+   * Both are declared in :root AND .dark with identical values, like the fill
+   * families: a flipping focus ring would be a ring that vanishes in one theme.
+   */
+  const TONES = [
+    { name: "light", token: "focus-ring-light", on: "#ffffff" },
+    { name: "dark", token: "focus-ring-dark", on: "#0a0b10" },
+  ] as const;
+
+  for (const tone of TONES) {
+    it.each([
+      [":root", "light"],
+      [".dark", "dark"],
+    ])(`keeps --${tone.token} identical in %s`, (block) => {
+      expect(
+        tokenInBlock(tokensCss, block, tone.token),
+        `--${tone.token} must not differ between themes; a focus ring that ` +
+          `flips is a ring that vanishes in one of them`,
+      ).toBe(tokenInBlock(tokensCss, ":root", tone.token));
+    });
+
+    it.each([
+      [":root", "light"],
+      [".dark", "dark"],
+    ])(`keeps --${tone.token} a literal in %s`, (block) => {
+      expect(tokenInBlock(tokensCss, block, tone.token)).toBe(tone.on);
+    });
+  }
+
+  it("clears 3:1 against every toast fill, so the light ring always lands", () => {
+    // 1.4.11 non-text contrast: the indicator is UI state, not text, so 3:1.
+    const ring = tokenInBlock(tokensCss, ":root", "focus-ring-light");
+    for (const fill of ["danger-fill", "positive-fill", "accent-fill"]) {
+      const ratio = contrastRatio(ring, tokenInBlock(tokensCss, ":root", fill));
+      expect(
+        ratio,
+        `the light focus ring ${ring} on --${fill} is ${ratio.toFixed(2)}:1 and ` +
+          `needs >= ${AA_NON_TEXT}:1 (WCAG 1.4.11)`,
+      ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+    }
+  });
+
+  it("clears 3:1 between the two tones, so the indicator is not one ambiguous line", () => {
+    const light = tokenInBlock(tokensCss, ":root", "focus-ring-light");
+    const dark = tokenInBlock(tokensCss, ":root", "focus-ring-dark");
+    const ratio = contrastRatio(light, dark);
+    expect(
+      ratio,
+      `the two focus tones are ${ratio.toFixed(2)}:1 apart and need >= ` +
+        `${AA_NON_TEXT}:1, or the sandwich reads as a single ambiguous line`,
+    ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+  });
+
+  it("gives each tone the surfaces its own theme needs, and only those", () => {
+    // The point of two tones: the light ring is invisible on the light surfaces
+    // and the dark ring is invisible on the dark ones, so neither is a general
+    // focus colour. Asserted so the naming cannot drift into implying one is.
+    const light = tokenInBlock(tokensCss, ":root", "focus-ring-light");
+    const dark = tokenInBlock(tokensCss, ":root", "focus-ring-dark");
+    for (const surface of [
+      "surface-canvas",
+      "surface-raised",
+      "surface-sunken",
+    ]) {
+      const lightSurface = tokenInBlock(tokensCss, ":root", surface);
+      const darkSurface = tokenInBlock(tokensCss, ".dark", surface);
+      expect(
+        contrastRatio(dark, lightSurface),
+        `the dark tone must clear the light --${surface}`,
+      ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+      expect(
+        contrastRatio(light, darkSurface),
+        `the light tone must clear the dark --${surface}`,
+      ).toBeGreaterThanOrEqual(AA_NON_TEXT);
+    }
+  });
+
+  it("is consumed by the toast, through the --color-* aliases", () => {
+    const toast = read("shared/components/ui/Toast.tsx");
+    for (const tone of TONES) {
+      expect(
+        toast.includes(`var(--color-${tone.token})`),
+        `--${tone.token} must be consumed by the toast via its --color-* alias; a ` +
+          `declared token with no call site is how --accent-fill shipped unused`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps the toast's focus ring off an accent-coloured token", () => {
+    // Named regression: `--color-accent` is the plausible spelling, and in light
+    // theme it is the same value as the info fill, which is what made the ring
+    // measure 1.00:1.
+    const toast = read("shared/components/ui/Toast.tsx");
+    const code = toast
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    expect(
+      /ring-\[var\(--color-accent\)\]/.test(code),
+      "the toast must not ring itself with --color-accent, which is the info " +
+        "fill's own value in light theme",
+    ).toBe(false);
+  });
+});
+
 describe("radius scale has a single source of truth", () => {
   const RADIUS_SCALE = [
     "radius-sm",

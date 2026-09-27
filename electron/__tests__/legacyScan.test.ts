@@ -61,7 +61,7 @@ describe("buildScanReport / summarizeReport (metadata only)", () => {
         { key: "open3dcalc_quotes_v1", value: MARKER },
         { key: "open3dcalc_settings_v2", value: "{}" },
       ],
-      { customers: 2, quotes: 1, quote_items: 3 },
+      { customers: 2, quotes: 1, quote_items: 3, history_entries: 4 },
     );
     expect(report.encryptedCount).toBe(1);
     expect(report.legacyCount).toBe(1);
@@ -69,6 +69,7 @@ describe("buildScanReport / summarizeReport (metadata only)", () => {
       customers: 2,
       quotes: 1,
       quote_items: 3,
+      history_entries: 4,
     });
     expect(report.manifestAvailable).toBe(true);
 
@@ -76,6 +77,9 @@ describe("buildScanReport / summarizeReport (metadata only)", () => {
     expect(summary).toContain("legacy=1");
     expect(summary).toContain("encrypted=1");
     expect(summary).toContain("open3dcalc_quotes_v1");
+    // Every declared PII domain table is named — a table that goes missing
+    // from the report must fail here rather than pass silently.
+    expect(summary).toContain("history_entries=4");
     // Metadata only — the stored VALUE must never appear in the summary.
     expect(summary).not.toContain("Fernanda");
     expect(summary).not.toContain("@");

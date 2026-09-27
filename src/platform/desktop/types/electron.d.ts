@@ -5,6 +5,11 @@
  * and consumed by `src/overrides/db-bridge.ts`.
  */
 
+// Type-only: erased at compile time. Deriving the report shape from the
+// canonical PII table list means adding a table is a compile error here rather
+// than a silently un-reported column in the IPC contract.
+import type { PiiDomainTableCounts } from "../../../../electron/piiDomainTables.js";
+
 /** Database operations available through IPC. */
 /** Full Electron API exposed via contextBridge. */
 export interface ElectronAPI {
@@ -54,7 +59,7 @@ declare global {
       entries: Array<{ key: string; surface: string; status: string }>;
       legacyCount: number;
       encryptedCount: number;
-      domainTables: { customers: number; quotes: number; quote_items: number };
+      domainTables: PiiDomainTableCounts;
       manifestAvailable: boolean;
     }>;
 

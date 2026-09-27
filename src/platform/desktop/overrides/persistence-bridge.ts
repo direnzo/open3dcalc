@@ -5,7 +5,7 @@
  *   - On startup: loads SQLite data into localStorage (stores hydrate as usual)
  *   - On first run: migrates existing localStorage → SQLite
  *   - On beforeunload: saves localStorage → SQLite
- *   - Periodic auto-save every 30 seconds as a safety net
+ *   - Periodic auto-save (see AUTO_SAVE_INTERVAL_MS) as a safety net
  *
  * This allows all existing Zustand stores to work unchanged — they still
  * use localStorage, but the durable store is SQLite.
@@ -23,6 +23,18 @@ import { isKeyAllowed } from "@/shared/lib/manifestGate";
 
 let consecutiveDbFailures = 0;
 const MAX_FAILURES_BEFORE_WARN = 5;
+
+/**
+ * How often the safety-net save runs.
+ *
+ * Declared here, once, and referred to by name everywhere below — the four
+ * comments that used to restate the interval in prose all said "30 seconds"
+ * while the constant had been 10 s for a while, and reading one of them is
+ * what put the wrong figure into an approved plan. A number that is only ever
+ * written once cannot drift from the code it describes; a number repeated in
+ * four comments can, and did.
+ */
+const AUTO_SAVE_INTERVAL_MS = 10_000;
 
 /* ------------------------------------------------------------------ */
 /*  Known localStorage keys used throughout the app                    */
@@ -90,6 +102,21 @@ function collectLocalStorageEntries(): Array<[string, string]> {
   return entries;
 }
 
+/**
+ * Record one failed operation.
+ *
+ * The log line carries the real error; the DOM event deliberately does NOT.
+ *
+ * `open3dcalc:db-error` is dispatched into the renderer, where it becomes
+ * user-visible text via `DbErrorBanner`, so its `detail.message` is a FIXED
+ * string and stays one — no error message, no key name, no stack, nothing
+ * derived from a value. Interpolating `error` into it would be the obvious
+ * "improvement" and it is the PII-exposure path this file is written to keep
+ * shut (§3.2 — logs carry key NAMES only, never values, and a user-facing
+ * string is a wider channel than a log). The cost of the fixed string is that
+ * it cannot say which key failed; that diagnosis belongs in the console line
+ * above, which already has the error.
+ */
 function noteDbFailure(error: unknown, operation: string): void {
   console.warn(`[persistence-bridge] Failed to ${operation}:`, error);
   consecutiveDbFailures++;
@@ -137,14 +164,57 @@ async function loadFromDatabase(): Promise<void> {
 }
 
 /**
+ * A save pass that lost one or more keys.
+ *
+ * Reported as ONE error carrying every key and its own error, rather than the
+ * first refusal: a single quarantined PII key explains a failed pass, and five
+ * of them do not. What the caller does with it is deliberately narrow — the
+ * console line it produces receives this error whole, so the aggregated
+ * message (every lost key) and every per-key error underneath it are what
+ * reaches the log. The `open3dcalc:db-error` signal that `noteDbFailure` also
+ * raises does NOT carry it: that event's text is a fixed string, and an error
+ * is not something to put in front of a user. See `noteDbFailure`.
+ *
+ * Key NAMES only, in the message and in the log — never a value (§3.2).
+ */
+export class PersistenceSaveError extends Error {
+  readonly failures: ReadonlyArray<{ key: string; error: unknown }>;
+
+  constructor(failures: ReadonlyArray<{ key: string; error: unknown }>) {
+    super(
+      `Failed to save ${failures.length} localStorage key(s) to SQLite: ` +
+        failures.map(({ key }) => key).join(", "),
+    );
+    this.name = "PersistenceSaveError";
+    this.failures = failures;
+  }
+}
+
+/**
  * Save all localStorage data to SQLite.
- * Called on beforeunload and periodically (every 30 s).
+ * Called on beforeunload and periodically (every 10 s).
  *
  * Moves JSON strings as-is from localStorage to SQLite.
+ *
+ * Per key, not per pass: a refused key is not a one-off. A quarantined PII key
+ * (ADR-002 §2.2.1) is refused on EVERY write until the user migrates or
+ * eliminates it, so the `await` this loop used to put in its header threw out
+ * of the function on the first one and every key after it in
+ * LOCALSTORAGE_KEYS went unpersisted without a word — a failure that was both
+ * total and permanent. The loop continues, and the pass reports itself as a
+ * whole once every key has had its turn.
  */
 async function saveToDatabase(): Promise<void> {
   const entries = collectLocalStorageEntries();
-  for (const [key, raw] of entries) await db().save(key, raw);
+  const failures: Array<{ key: string; error: unknown }> = [];
+  for (const [key, raw] of entries) {
+    try {
+      await db().save(key, raw);
+    } catch (error) {
+      failures.push({ key, error });
+    }
+  }
+  if (failures.length > 0) throw new PersistenceSaveError(failures);
   console.log(`[persistence-bridge] Saved ${entries.length} keys to SQLite`);
 }
 
@@ -216,7 +286,7 @@ async function migrateIfNeeded(): Promise<void> {
  *   1. Migrate localStorage → SQLite if first run
  *   2. Load SQLite data → localStorage (overwrites any stale localStorage)
  *   3. Register beforeunload handler for save-on-close
- *   4. Start periodic auto-save (every 30 seconds)
+ *   4. Start periodic auto-save (see AUTO_SAVE_INTERVAL_MS)
  */
 export async function initPersistenceBridge(): Promise<void> {
   if (!isElectron()) {
@@ -242,24 +312,31 @@ export async function initPersistenceBridge(): Promise<void> {
   //
   // NOTE: beforeunload fires when the window is about to close.
   // Electron's IPC invoke returns a Promise; we await it to flush.
-  // As a safety net, the 30 s periodic save guards against data loss
-  // if beforeunload doesn't fully complete.
+  // As a safety net, the periodic save (AUTO_SAVE_INTERVAL_MS) guards against
+  // data loss if beforeunload doesn't fully complete.
   window.addEventListener("beforeunload", () => {
     void saveToDatabase().catch((error: unknown) =>
       noteDbFailure(error, "save localStorage to SQLite"),
     );
   });
 
-  // 4. Periodic auto-save every 30 seconds (safety net)
+  // 4. Periodic auto-save on AUTO_SAVE_INTERVAL_MS (safety net)
   //    Also runs stale-key cleanup on each cycle.
-  const AUTO_SAVE_INTERVAL_MS = 10_000;
+  //
+  //    The two are settled independently on purpose. They were one `try`, so a
+  //    single refused key threw out of the block and the sweep never ran for
+  //    that cycle — while a refused key is exactly the kind that keeps being
+  //    refused, so the sweep was cancelled on every cycle from then on. The
+  //    sweep only deletes rows whose localStorage counterpart is gone, and a
+  //    write that was refused cannot change any key's membership, so the two
+  //    never actually depended on each other.
   setInterval(async () => {
-    try {
-      await saveToDatabase();
-      await deleteStaleKeys();
-    } catch (error) {
-      noteDbFailure(error, "save localStorage to SQLite");
-    }
+    await Promise.allSettled([
+      saveToDatabase().catch((error: unknown) =>
+        noteDbFailure(error, "save localStorage to SQLite"),
+      ),
+      deleteStaleKeys(),
+    ]);
   }, AUTO_SAVE_INTERVAL_MS);
 
   console.log(

@@ -45,9 +45,27 @@ const ENVELOPE_PREFIX = "enc1:envelope:";
 
 export class CryptoDeniedError extends Error {
   readonly code = "crypto_denied";
+  /**
+   * WHY this write was denied, as a code — `write_path_disabled`,
+   * `no_capability`, `quarantined_read_only`, `locked`, `unknown_key`, …
+   *
+   * Carried as a field, not only interpolated into the message. The reason is
+   * the only thing that distinguishes a rollback flag from a locked session
+   * from a quarantined key, and a consumer that has to `parse` the message to
+   * recover it cannot render it, branch on it, or assert on it — which is how
+   * the startup failure surface ended up showing every denial as the bare
+   * class name `CryptoDeniedError`.
+   *
+   * A CODE, never a value: these strings are all compile-time constants at the
+   * `new CryptoDeniedError(...)` sites, so nothing derived from a PII value
+   * reaches this field and it is safe to render (§3.2 — logs carry key NAMES,
+   * never values).
+   */
+  readonly reason: string;
   constructor(reason: string) {
     super(`[cryptoCapability] PII persistence denied (${reason})`);
     this.name = "CryptoDeniedError";
+    this.reason = reason;
   }
 }
 

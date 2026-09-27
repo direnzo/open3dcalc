@@ -7,7 +7,8 @@
  *  1. Gated: refuses to run without the diagnostic gate (§2.2.1).
  *  2. Redaction: optional redaction mode masks storage rows whose key is
  *     `pii: true` in the SPEC-01 manifest and strips the PII domain tables
- *     (customers/quotes/quote_items) before the file lands (§2.2.2).
+ *     (customers/quotes/quote_items/history_entries — see `piiDomainTables.ts`)
+ *     before the file lands (§2.2.2).
  *  3. Local only: the output path is operator-chosen; nothing in this
  *     module performs any network I/O (§2.2.3).
  *  4. Retention: every backup writes a `<target>.meta.json` sidecar
@@ -24,6 +25,7 @@ import { createRequire } from "node:module";
 import { isKnownKey, getEntry } from "../src/shared/lib/dataManifest.js";
 import { loadManifestFromDisk } from "./manifestSource.js";
 import { isDiagnosticGateEnabled } from "./diagnosticGate.js";
+import { PII_DOMAIN_TABLES } from "./piiDomainTables.js";
 
 export const DIAGNOSTIC_RETENTION_DAYS = 14;
 
@@ -59,7 +61,24 @@ function getSqlite(): typeof import("better-sqlite3") {
   return REQUIRE("better-sqlite3") as typeof import("better-sqlite3");
 }
 
-const PII_DOMAIN_TABLES = ["customers", "quotes", "quote_items"] as const;
+/**
+ * DELETE every row of a PII domain table, tolerating an absent table.
+ * Profiles created before a table was introduced do not have it, and the
+ * backup must still be produced (redaction is best-effort per table, never
+ * fatal). Mirrors the idempotent guard in `erasureStores`.
+ */
+function stripDomainTable(
+  sqlite: { prepare(sql: string): { run(...p: unknown[]): unknown } },
+  table: string,
+): number {
+  try {
+    return (sqlite.prepare(`DELETE FROM ${table}`).run() as { changes: number })
+      .changes;
+  } catch {
+    // Table absent in this database — nothing to strip.
+    return 0;
+  }
+}
 
 /**
  * Produce the diagnostic backup. Refuses without the diagnostic gate.
@@ -108,9 +127,7 @@ export async function createDiagnosticBackup(
         .prepare("UPDATE storage SET value = '[REDACTED]'")
         .run().changes;
       for (const table of PII_DOMAIN_TABLES) {
-        strippedDomainRows += sqlite
-          .prepare(`DELETE FROM ${table}`)
-          .run().changes;
+        strippedDomainRows += stripDomainTable(sqlite, table);
       }
     }
     if (manifest) {
@@ -134,9 +151,7 @@ export async function createDiagnosticBackup(
         }
       }
       for (const table of PII_DOMAIN_TABLES) {
-        strippedDomainRows += sqlite
-          .prepare(`DELETE FROM ${table}`)
-          .run().changes;
+        strippedDomainRows += stripDomainTable(sqlite, table);
       }
     }
     // Compact so masked content is not retained in free pages.

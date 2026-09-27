@@ -2475,5 +2475,18 @@
     "openSource": "Open Source · MIT License",
     "github": "GitHub",
     "telegram": "Canal Telegram"
+  },
+
+  "persistence": {
+    "bridge": {
+      "startupAriaLabel": "Falha ao abrir o armazenamento local",
+      "startupTitle": "Não foi possível abrir o armazenamento local",
+      "startupMessage": "O aplicativo não iniciou porque a camada de persistência recusou a operação. Nada foi apagado: os seus dados continuam onde estavam e você pode fechar o aplicativo com segurança.",
+      "startupDetail": "Motivo informado pela camada de persistência: {{reason}}",
+      "retry": "Tentar novamente",
+      "runtimeAriaLabel": "Armazenamento local indisponível",
+      "runtimeTitle": "As alterações não estão sendo salvas",
+      "dismiss": "Dispensar aviso"
+    }
   }
 }

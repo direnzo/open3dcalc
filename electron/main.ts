@@ -31,6 +31,10 @@ import {
 import { saveGated, loadGated } from "./persistGate.js";
 import { buildScanReport, summarizeReport } from "./legacyScan.js";
 import {
+  PII_DOMAIN_TABLES,
+  type PiiDomainTableCounts,
+} from "./piiDomainTables.js";
+import {
   buildQuarantineReport,
   migrateKey,
   eliminateKey,
@@ -723,16 +727,17 @@ function runPrivacyScan(): ReturnType<typeof buildScanReport> {
         c: number;
       }
     ).c;
-  const report = buildScanReport(rows, {
-    customers: countRows("customers"),
-    quotes: countRows("quotes"),
-    quote_items: countRows("quote_items"),
-  });
+  // Counts are read for every table in the canonical list — hardcoding the
+  // names here is exactly how `history_entries` went unreported.
+  const domainCounts = Object.fromEntries(
+    PII_DOMAIN_TABLES.map((table) => [table, countRows(table)]),
+  ) as PiiDomainTableCounts;
+  const report = buildScanReport(rows, domainCounts);
   const summary = summarizeReport(report);
-  const domainPlaintext =
-    report.domainTables.customers +
-    report.domainTables.quotes +
-    report.domainTables.quote_items;
+  const domainPlaintext = Object.values(report.domainTables).reduce(
+    (total, count) => total + count,
+    0,
+  );
   if (report.legacyCount > 0 || domainPlaintext > 0) {
     console.warn(
       `[privacy] legacy plaintext PII detected (ADR-002 §2.2): ${summary}`,

@@ -66,7 +66,7 @@ consent as **not given** (default-deny, §6).
 - On every load, the app MUST recompute the digest. Mismatch ⇒ the receipt is treated as
   **invalid** ⇒ consent is not given (default-deny) and the user is asked to consent
   again under the current policy. The app never "repairs" a tampered receipt.
-- Note the threat model honestly: a local digest is tamper-*evident*, not tamper-*proof*
+- Note the threat model honestly: a local digest is tamper-_evident_, not tamper-_proof_
   against a fully-compromised device (an attacker with file access can recompute it). It
   protects against accidental mutation, partial writes, and naive edits — the realistic
   risks for a local-first app. Cryptographic non-repudiation is out of scope for D1.
@@ -100,6 +100,28 @@ consents under the current policy.
 over silently. The app compares the receipt's `policy_version`/`policy_hash` to the
 current policy; mismatch ⇒ re-consent required for the delta (new/changed purposes), with
 the old receipt retained as history. The user is shown what changed.
+
+**Policy 1.4 → 1.5 (Beta5 privacy remediation).** The manifest policy content changed, so
+`policy_version` moved from `1.4` to `1.5`. Receipts issued under `1.4` now evaluate as
+`policy_mismatch` and the user is **re-consented**. This is the intended behaviour, not a
+regression. What changed in the policy the user is consenting to:
+
+- `history_entries` and `quote_items` are now declared PII sqlite domain tables.
+  `history_entries` was PII-bearing but absent from the manifest entirely, so it was
+  invisible to the erasure post-condition, which reported "clean" while its rows survived.
+- `open3dcalc_migration_done_v2` is now `pii: true` (its value embeds the full raw
+  pre-migration history array) instead of a non-PII onboarding flag.
+- `open3dcalc_dashboard_v1` is now `pii: false` (it persists only three typed-in
+  numbers; the aggregates it displays are computed in memory and never stored).
+- `appdata_temp_staging` and the new `appdata_diagnostic_backup` declare the real
+  surfaces; the latter discloses that `redact: false` is a straight unredacted copy of
+  the whole database retained for 14 days.
+- `erasure_snapshots` is narrowed to `electron` (the desktop saga uses
+  `diskSnapshotStore` under userData). The genuinely unwritten `idb_reports_staging` and
+  `opfs_export_staging` declarations are removed — neither has a writer anywhere in the
+  codebase. `open3dcalc_erasure_snapshot` is **retained**: it is written by
+  `webSnapshotStore().write()` through `guardedStorage`, so the S1 gate must keep
+  recognizing it.
 
 ## 7. What D1.0 does NOT deliver
 

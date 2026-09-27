@@ -1,4 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
+// Type-only: erased at compile time, so this adds no runtime require across the
+// CJS/ESM boundary. `resolution-mode: import` is required by TS1541 because
+// preload.cts is CommonJS and the source module is ESM. Deriving the shape
+// means a fifth PII table is a compile error here, not a silently un-reported
+// column in the IPC contract.
+import type { PiiDomainTableCounts } from "./piiDomainTables.js" with { "resolution-mode": "import" };
 
 /**
  * Type-safe API exposed to the renderer process via contextBridge.
@@ -169,7 +175,7 @@ const electronAPI = {
       entries: Array<{ key: string; surface: string; status: string }>;
       legacyCount: number;
       encryptedCount: number;
-      domainTables: { customers: number; quotes: number; quote_items: number };
+      domainTables: PiiDomainTableCounts;
       manifestAvailable: boolean;
     }> => ipcRenderer.invoke("privacy:scan-report"),
 

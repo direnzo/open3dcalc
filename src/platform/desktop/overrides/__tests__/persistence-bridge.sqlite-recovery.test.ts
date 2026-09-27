@@ -9,7 +9,10 @@ import { isKeyAllowed } from "@/shared/lib/manifestGate";
 import { closeDatabase, initDatabase } from "../../../../../db/database";
 import { writeStoredRow } from "../../../../../electron/persistGate";
 import type { ElectronAPI } from "@/platform/desktop/types/electron";
-import { initPersistenceBridge } from "../persistence-bridge";
+import {
+  initPersistenceBridge,
+  PersistenceSaveError,
+} from "../persistence-bridge";
 
 interface ManifestKey {
   key: string;
@@ -255,11 +258,8 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     const closeFailure = new Error("synthetic close-time save failure");
     save.mockRejectedValueOnce(closeFailure);
     window.dispatchEvent(new Event("beforeunload"));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(warn).toHaveBeenCalledWith(
-      "[persistence-bridge] Failed to save localStorage to SQLite:",
-      closeFailure,
+    await vi.waitFor(() =>
+      expect(reportedSaveError(warn.mock.calls, closeFailure)).toBeDefined(),
     );
 
     const staleKey = "open3dcalc_synthetic_stale";
@@ -282,9 +282,8 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     const intervalFailure = new Error("synthetic periodic save failure");
     save.mockRejectedValueOnce(intervalFailure);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(warn).toHaveBeenCalledWith(
-      "[persistence-bridge] Failed to save localStorage to SQLite:",
-      intervalFailure,
+    await vi.waitFor(() =>
+      expect(reportedSaveError(warn.mock.calls, intervalFailure)).toBeDefined(),
     );
     warn.mockRestore();
   });
@@ -356,4 +355,28 @@ function setElectronDb(db: ElectronAPI["db"]): void {
   ).electronAPI = {
     db,
   };
+}
+
+/**
+ * The save pass that reported `original`, as the reporter received it.
+ *
+ * A save pass is reported as one `PersistenceSaveError` carrying every key it
+ * lost and each key's own error, rather than as the first refusal: the loop
+ * continues past a refused key so a single quarantined PII key cannot strand
+ * the rest of the pass, and the aggregate is what makes that visible. The
+ * per-key error is still reachable, which is what these specs are about — a
+ * synthetic failure has to be findable inside the aggregate by identity, not
+ * merely by message.
+ */
+function reportedSaveError(
+  warnCalls: unknown[][],
+  original: unknown,
+): PersistenceSaveError | undefined {
+  return warnCalls
+    .map(([, error]) => error)
+    .find(
+      (error): error is PersistenceSaveError =>
+        error instanceof PersistenceSaveError &&
+        error.failures.some(({ error }) => error === original),
+    );
 }

@@ -13,8 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { StoreAdapterLike } from "../src/shared/lib/erasureSaga/types.js";
 import type { MinimalStorageDb } from "./persistGate.js";
-
-const PII_DOMAIN_TABLES = ["customers", "quotes", "quote_items"] as const;
+import { PII_DOMAIN_TABLES } from "./piiDomainTables.js";
 
 export interface RendererStoreReport {
   purged: number;
@@ -136,7 +135,23 @@ export function sqliteWalShmAdapter(
   };
 }
 
-/** §3 row 8: app-owned files under userData — never the journal or the DB. */
+/**
+ * §3 row 8: app-owned files under userData — never the journal or the DB.
+ *
+ * NOTE on a pre-existing asymmetry (recorded, NOT changed here): `purge()`
+ * deletes every top-level `open3dcalc*` file with no exclusion, while
+ * `rescan()` skips anything starting with `open3dcalc-backup`. purge is
+ * therefore strictly stronger than the post-condition for that prefix, so it
+ * cannot cause residue — but the converse is a latent gap: if purge ever fails
+ * to remove an `open3dcalc-backup*` file (permissions, EBUSY), the rescan will
+ * not report it and the saga still commits. Fixing it means narrowing rescan's
+ * exclusion, which changes erasure behaviour and is deferred to a later wave.
+ *
+ * Related: `db/database.ts` resolves the DB to `<userData>/open3dcalc.db`, so
+ * `dirname(dbPath) === userData` and the pre-import copies
+ * `<userData>/open3dcalc.db.backup-<ts>` produced by `db:import` ARE covered by
+ * this adapter on both purge and rescan.
+ */
 export function appdataFilesAdapter(userDataDir: string): StoreAdapterLike {
   const KEEP = new Set(["erasure-journal.json", "erasure-snapshots"]);
   return {

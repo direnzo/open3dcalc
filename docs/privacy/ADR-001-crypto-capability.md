@@ -11,7 +11,8 @@ Open3DCalc persists user data on three surfaces:
 
 - **Electron desktop:** renderer state mirrored into a SQLite `storage` table via
   `db:get`/`db:set`/`db:delete`/`db:list-keys` IPC, plus the SQLite domain tables
-  (`customers`, `quotes`, `quote_items`, …) under `userData`.
+  (`customers`, `quotes`, `quote_items`, `history_entries` — the single list is
+  `PII_DOMAIN_TABLES` in `electron/piiDomainTables.ts`) under `userData`.
 - **Web/PWA:** `localStorage` (Zustand `persist` and direct `localStorage` usage), plus
   potential IndexedDB/OPFS and Cache API surfaces used by the PWA/service worker.
 - **Cross-device transfer:** the `dataSync.ts` encrypted bundle (already AES-256-GCM with
@@ -76,14 +77,14 @@ unencrypted at rest. `plaintext_allowed` in SPEC-01 is valid **only** for keys w
 The table below is normative for D1.1+ and is mirrored by SPEC-01's per-platform fields.
 "PII persistence outcome" is the only allowed outcome for that row.
 
-| Platform | `safeStorage` / Web Crypto | Passphrase (in memory) | PII persistence outcome |
-|----------|---------------------------|------------------------|-------------------------|
-| Electron | `safeStorage` available | (not required) | **Encrypted at rest** via `safeStorage` |
-| Electron | `safeStorage` unavailable | Available | **Encrypted at rest** via passphrase envelope (SPEC-03 params) |
-| Electron | `safeStorage` unavailable | Not available | **DENIED** — PII features degrade to `memory_only` or disabled |
-| Web/PWA | Secure context | Available | **Encrypted at rest** via Web Crypto + passphrase |
-| Web/PWA | Secure context | Not available | **DENIED** — PII blocked (memory-only at most) |
-| Web/PWA | Insecure context | (any) | **DENIED** — PII blocked; non-PII unaffected |
+| Platform | `safeStorage` / Web Crypto | Passphrase (in memory) | PII persistence outcome                                        |
+| -------- | -------------------------- | ---------------------- | -------------------------------------------------------------- |
+| Electron | `safeStorage` available    | (not required)         | **Encrypted at rest** via `safeStorage`                        |
+| Electron | `safeStorage` unavailable  | Available              | **Encrypted at rest** via passphrase envelope (SPEC-03 params) |
+| Electron | `safeStorage` unavailable  | Not available          | **DENIED** — PII features degrade to `memory_only` or disabled |
+| Web/PWA  | Secure context             | Available              | **Encrypted at rest** via Web Crypto + passphrase              |
+| Web/PWA  | Secure context             | Not available          | **DENIED** — PII blocked (memory-only at most)                 |
+| Web/PWA  | Insecure context           | (any)                  | **DENIED** — PII blocked; non-PII unaffected                   |
 
 Notes:
 

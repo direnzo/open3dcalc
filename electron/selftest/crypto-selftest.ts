@@ -235,6 +235,7 @@ async function runSelftest(): Promise<SelftestReport> {
     customers: 0,
     quotes: 0,
     quote_items: 0,
+    history_entries: 0,
   });
   s3.scanLegacyCount = scan.legacyCount;
   s3.scanEncryptedCount = scan.encryptedCount;

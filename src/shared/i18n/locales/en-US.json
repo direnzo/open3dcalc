@@ -2475,5 +2475,18 @@
     "openSource": "Open Source · MIT License",
     "github": "GitHub",
     "telegram": "Telegram Channel"
+  },
+
+  "persistence": {
+    "bridge": {
+      "startupAriaLabel": "Could not open local storage",
+      "startupTitle": "Local storage could not be opened",
+      "startupMessage": "The app did not start because the persistence layer refused the operation. Nothing was deleted: your data is still where it was and you can close the app safely.",
+      "startupDetail": "Reason reported by the persistence layer: {{reason}}",
+      "retry": "Try again",
+      "runtimeAriaLabel": "Local storage unavailable",
+      "runtimeTitle": "Your changes are not being saved",
+      "dismiss": "Dismiss"
+    }
   }
 }

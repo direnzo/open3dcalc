@@ -103,6 +103,54 @@ describe("encryptForStorage / decryptFromStorage", () => {
     ).rejects.toThrow(UnknownBlobError);
   });
 
+  /**
+   * The reason is a FIELD, not only a fragment of the message.
+   *
+   * It used to be a constructor argument that reached nowhere but
+   * `super(...)`, so every consumer that wanted to know WHY a write was denied
+   * had to parse the message — and the one consumer that tried, the desktop
+   * startup failure surface, silently fell back to the class name and rendered
+   * "CryptoDeniedError" for five mutually exclusive causes. A class that
+   * documents a reason code in its signature has to expose it.
+   */
+  it("carries the reason as a readable field", async () => {
+    // safeStorage off and no session passphrase (the beforeEach zeroizes it)
+    // is the ADR-001 §2.1 deny path. `no_safe_storage_no_passphrase` is the
+    // capability table's own code, not a label invented for this spec.
+    hoisted.mockSafeStorage.isEncryptionAvailable.mockReturnValue(false);
+    await expect(
+      encryptForStorage("open3dcalc_customers_v1", MARKER),
+    ).rejects.toMatchObject({
+      name: "CryptoDeniedError",
+      code: "crypto_denied",
+      reason: "no_safe_storage_no_passphrase",
+    });
+  });
+
+  it("gives each refusal its own reason, not one shared string", async () => {
+    // Two denials that are mutually exclusive and operationally different —
+    // a machine with no keyring at all, and a session that was locked after the
+    // passphrase was adopted. This is the property the renderer surface reads,
+    // and the reason it can render more than a class name.
+    hoisted.mockSafeStorage.isEncryptionAvailable.mockReturnValue(false);
+    const noKeyring = await encryptForStorage(
+      "open3dcalc_customers_v1",
+      MARKER,
+    ).catch((error: unknown) => error as CryptoDeniedError);
+    expect(noKeyring.reason).toBe("no_safe_storage_no_passphrase");
+
+    adoptSessionPassphrase("sessão-sintética-3131");
+    const blob = await encryptForStorage("open3dcalc_customers_v1", MARKER);
+    lockCryptoSession();
+    const locked = await decryptFromStorage(
+      "open3dcalc_customers_v1",
+      blob,
+    ).catch((error: unknown) => error as CryptoDeniedError);
+
+    expect(locked.reason).toBe("locked");
+    expect(locked.reason).not.toBe(noKeyring.reason);
+  });
+
   it("wrong passphrase after write is rejected (envelope integrity)", async () => {
     hoisted.mockSafeStorage.isEncryptionAvailable.mockReturnValue(false);
     adoptSessionPassphrase("sessão-sintética-3131");

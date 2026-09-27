@@ -7,17 +7,39 @@
  * (real Electron binary, real SQLite file, no mocks).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+/**
+ * Since Wave 2 the `safeStorage` branch of the capability layer needs a real OS
+ * keyring AND somewhere to keep the wrapped profile data key, so the `electron`
+ * mock has to stand in for the whole main-process surface the layer touches —
+ * not just `safeStorage`. Without `getSelectedStorageBackend` the Linux
+ * allowlist refuses everything (correctly), and without `app.getPath` there is
+ * nowhere to persist the wrapped key, so the layer denies PII and these specs
+ * would be asserting a failure rather than the gate's behaviour.
+ */
 const hoisted = vi.hoisted(() => ({
+  userDataDir: { value: "" },
   mockSafeStorage: {
     isEncryptionAvailable: vi.fn<[], boolean>(() => true),
-    encryptString: vi.fn<[], Buffer>(),
-    decryptString: vi.fn<[], string>(),
+    encryptString: vi.fn<[string], Buffer>(),
+    decryptString: vi.fn<[Buffer], string>(),
+    getSelectedStorageBackend: vi.fn<[], string>(() => "gnome_libsecret"),
   },
 }));
 
-vi.mock("electron", () => ({ safeStorage: hoisted.mockSafeStorage }));
+vi.mock("electron", () => ({
+  safeStorage: hoisted.mockSafeStorage,
+  app: {
+    getPath: (name: string) => {
+      if (name === "userData") return hoisted.userDataDir.value;
+      throw new Error(`unexpected path request: ${name}`);
+    },
+  },
+}));
 
 import {
   resolveKeyPolicy,
@@ -28,6 +50,7 @@ import {
   type MinimalStorageDb,
 } from "../persistGate.js";
 import { CryptoDeniedError } from "../cryptoCapability.js";
+import { resetProfileDataKeyForTests } from "../profileDataKey.js";
 import { zeroizeSessionPassphrase } from "../../src/shared/lib/crypto/passphraseSession.js";
 
 const PII_KEY = "open3dcalc_customers_v1";
@@ -37,6 +60,11 @@ const MARKER = "Fernanda Sintética <fernanda@exemplo.teste>";
 
 beforeEach(() => {
   zeroizeSessionPassphrase();
+  // A fresh profile per spec: the wrapped data key is cached in process memory
+  // and persisted per `userData`, so a shared directory would let one spec's
+  // key silently satisfy another's.
+  hoisted.userDataDir.value = mkdtempSync(join(tmpdir(), "o3dc-gate-"));
+  resetProfileDataKeyForTests();
   vi.clearAllMocks();
   hoisted.mockSafeStorage.isEncryptionAvailable.mockReturnValue(true);
   hoisted.mockSafeStorage.encryptString.mockImplementation((s: string) =>
@@ -45,6 +73,14 @@ beforeEach(() => {
   hoisted.mockSafeStorage.decryptString.mockImplementation((b: Buffer) =>
     Buffer.from(b).toString("utf8").slice(5),
   );
+  hoisted.mockSafeStorage.getSelectedStorageBackend.mockReturnValue(
+    "gnome_libsecret",
+  );
+});
+
+afterEach(() => {
+  resetProfileDataKeyForTests();
+  rmSync(hoisted.userDataDir.value, { recursive: true, force: true });
 });
 
 describe("resolveKeyPolicy (manifest as source of truth)", () => {

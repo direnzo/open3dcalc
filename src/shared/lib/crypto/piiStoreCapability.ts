@@ -34,6 +34,15 @@ export type PiiStoreDenialReason =
   | "demo_session"
   /** No capability probe was ever installed — nothing is known. */
   | "capability_unknown"
+  /**
+   * There is no browser here at all — the Electron main process, a worker, or
+   * plain Node. Distinct from `insecure_context` on purpose: the main process
+   * is not an insecure context, it is simply not a context, and telling a
+   * desktop user their context is insecure when the real answer is "this code
+   * path does not belong in this process" sends them looking for a TLS
+   * problem they do not have.
+   */
+  | "not_a_browser"
   /** The user declined PII persistence. */
   | "consent_declined"
   /** `window.isSecureContext` is false, or was not observable. */
@@ -54,6 +63,11 @@ export type PiiStoreDenialReason =
  * live by the choke point, so a withdrawal takes effect immediately.
  */
 export interface PiiStoreEnvironment {
+  /**
+   * Whether a `window` with a security origin exists at all. Undefined is a
+   * denial: a runtime that cannot report a window is not a browser.
+   */
+  browser: boolean | undefined;
   secureContext: boolean | undefined;
   webCryptoAvailable: boolean | undefined;
   indexedDbAvailable: boolean | undefined;
@@ -84,6 +98,7 @@ export function resolvePiiStoreRefusal(
 ): PiiStoreDenialReason | null {
   if (input.demoSuppressed) return "demo_session";
   if (input.environment === null) return "capability_unknown";
+  if (input.environment.browser !== true) return "not_a_browser";
   if (input.declined) return "consent_declined";
   if (input.environment.secureContext !== true) return "insecure_context";
   if (input.environment.webCryptoAvailable !== true) {
@@ -94,4 +109,78 @@ export function resolvePiiStoreRefusal(
   }
   if (input.locked) return "profile_locked";
   return null;
+}
+
+// ---------------------------------------------------------------------------
+//  The gate's mutable state
+// ---------------------------------------------------------------------------
+//
+// Why the state lives HERE and not in `manifestStorage.ts`: the Electron main
+// process compiles this directory with `lib: ["ES2023"]` and no DOM, and a
+// vault that reached for a zustand-and-`window` module would drag a renderer
+// dependency into the main bundle. This module is pure data and one decision
+// function, so both builds can load it.
+//
+// The demo-session flag is still OWNED by `manifestStorage` and still set in
+// one place; `setDemoPersistenceSuppressed` mirrors the boolean in here rather
+// than a second gate being allowed to grow next to the first. A mirror cannot
+// drift the way two independent predicates can, which was the whole point of
+// the single choke point.
+
+let piiStoreEnvironment: PiiStoreEnvironment | null = null;
+let piiPersistenceDeclined = false;
+let demoSuppressed = false;
+
+/** Install (or clear, with null) the vault's capability snapshot. */
+export function setPiiStoreEnvironment(
+  environment: PiiStoreEnvironment | null,
+): void {
+  piiStoreEnvironment = environment;
+}
+
+/** Record that the user declined PII persistence (consent withdrawn/opt-out). */
+export function setPiiPersistenceDeclined(value: boolean): void {
+  piiPersistenceDeclined = value;
+}
+
+/** True while the user has declined PII persistence. */
+export function isPiiPersistenceDeclined(): boolean {
+  return piiPersistenceDeclined;
+}
+
+/**
+ * Mirror the demo-session suppression flag owned by `manifestStorage`.
+ * Called only by `setDemoPersistenceSuppressed`.
+ */
+export function setDemoSuppressedForPiiGate(value: boolean): void {
+  demoSuppressed = value;
+}
+
+/**
+ * Why the PII vault must refuse, or null when it may proceed.
+ *
+ * `locked` is passed in by the caller because the held key is per-store state,
+ * not a module-level flag.
+ */
+export function piiStoreRefusalReason(
+  locked: boolean,
+): PiiStoreDenialReason | null {
+  return resolvePiiStoreRefusal({
+    demoSuppressed,
+    environment: piiStoreEnvironment,
+    declined: piiPersistenceDeclined,
+    locked,
+  });
+}
+
+/** True when the vault may read or write PII right now. */
+export function isPiiStoreAllowed(locked: boolean): boolean {
+  return piiStoreRefusalReason(locked) === null;
+}
+
+/** Test-only: forget every installed fact, so one test cannot leak into the next. */
+export function resetPiiStoreGateForTests(): void {
+  piiStoreEnvironment = null;
+  piiPersistenceDeclined = false;
+  demoSuppressed = false;
 }

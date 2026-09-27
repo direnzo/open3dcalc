@@ -24,6 +24,8 @@
  * hand-fed results, so what the tests exercise is the vault's own logic.
  */
 
+import type { VaultIdbFactory } from "@/shared/lib/crypto/indexedDbPort";
+
 /** Thrown by the double where the real API would raise an `InvalidStateError`. */
 export function inactiveTransactionError(): DOMException {
   return new DOMException(
@@ -199,8 +201,14 @@ class FakeDatabase {
 }
 
 export interface FakeIndexedDb {
-  /** Use as the `indexedDb` option on the PII vault under test. */
-  factory: IDBFactory;
+  /**
+   * Use as the `indexedDb` option on the PII vault under test.
+   *
+   * Typed as the vault's PORT, not as the DOM's `IDBFactory`, so the tests
+   * exercise the same structural contract production injects. The one cast
+   * from this double's own classes lives at the bottom of this file.
+   */
+  factory: VaultIdbFactory;
   /** Peak number of readwrite transactions open at the same time. */
   maxConcurrentReadWrite(): number;
   /** The raw stored value, for byte-level assertions. */
@@ -254,7 +262,7 @@ export function createFakeIndexedDb(): FakeIndexedDb {
       }, 0);
       return request;
     },
-  } as unknown as IDBFactory;
+  } as unknown as VaultIdbFactory;
 
   const storeOf = (storeName: string): Map<string, unknown> => {
     for (const db of databases.values()) {

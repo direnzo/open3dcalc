@@ -40,11 +40,11 @@ import {
 } from "@/shared/lib/crypto/piiStore";
 import { PII_SCHEMA_VERSION } from "@/shared/lib/crypto/piiSchemaVersion";
 import { PII_STORE_ENVIRONMENT } from "@/shared/lib/crypto/__tests__/piiStoreFixtures";
+import { setDemoPersistenceSuppressed } from "@/shared/lib/manifestStorage";
 import {
-  setDemoPersistenceSuppressed,
   setPiiPersistenceDeclined,
   setPiiStoreEnvironment,
-} from "@/shared/lib/manifestStorage";
+} from "@/shared/lib/crypto/piiStoreCapability";
 import { zeroizeSessionPassphrase } from "@/shared/lib/crypto/passphraseSession";
 import {
   createFakeIndexedDb,

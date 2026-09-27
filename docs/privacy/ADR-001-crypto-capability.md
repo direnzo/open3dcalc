@@ -72,6 +72,31 @@ unencrypted at rest. `plaintext_allowed` in SPEC-01 is valid **only** for keys w
   artifacts. Cache API entries are covered by the erasure saga (SPEC-02) and by the
   manifest's `surface` field.
 
+**The browser vault is renderer-only, and the main process is not a browser.** The
+encrypted IndexedDB vault (`src/shared/lib/crypto/piiStore.ts`) is reachable
+only from a browser context, and it REFUSES — with a typed reason — everywhere
+else. `electron/tsconfig.json` compiles `src/shared/lib/crypto/**`, so the module
+is loaded by the main build by construction; it must load without throwing, and
+it must be impossible to obtain a working handle there. Three things make that
+true rather than aspirational:
+
+- the IndexedDB dependency is an **injected port** (`crypto/indexedDbPort.ts`),
+  not the ambient global, so its absence is a refusal rather than a crash, and
+  the single `globalThis` cast is confined to one documented function;
+- the capability gate is **DOM-free and dependency-free**
+  (`crypto/piiStoreCapability.ts`), so the vault does not import a zustand /
+  `window` module into the main bundle. `manifestStorage.ts` owns the demo flag
+  and mirrors it in; the gate owns the decision;
+- a non-browser runtime gets its own reason, **`not_a_browser`**, distinct from
+  `insecure_context`. The main process is not an insecure context, and a
+  desktop user told their context is insecure goes looking for a TLS problem
+  they do not have.
+
+Construction refuses on the capability axes; the `locked` axis is checked per
+operation, because a handle legitimately exists before a passphrase does. An
+inert handle was considered and rejected: a future caller could hold one, assume
+it works, and ship a path that silently persists nothing.
+
 ### 2.3 Capability decision table
 
 The table below is normative for D1.1+ and is mirrored by SPEC-01's per-platform fields.

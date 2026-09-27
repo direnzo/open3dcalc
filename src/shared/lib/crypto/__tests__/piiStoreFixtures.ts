@@ -11,8 +11,9 @@
 
 import type { PiiStoreEnvironment } from "@/shared/lib/crypto/piiStoreCapability";
 
-/** Secure context, Web Crypto present, IndexedDB reachable. */
+/** A browser, secure context, Web Crypto present, IndexedDB reachable. */
 export const PII_STORE_ENVIRONMENT: PiiStoreEnvironment = {
+  browser: true,
   secureContext: true,
   webCryptoAvailable: true,
   indexedDbAvailable: true,

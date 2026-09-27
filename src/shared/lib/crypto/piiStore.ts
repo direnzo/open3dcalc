@@ -62,12 +62,8 @@ import {
   buildAadBytes,
   type AtRestEnvelope,
   type EnvelopeExpectation,
-} from "./envelope";
-import { PII_SCHEMA_VERSION } from "./piiSchemaVersion";
-import {
-  piiStoreRefusalReason,
-  setPiiStoreEnvironment,
-} from "@/shared/lib/manifestStorage";
+} from "./envelope.js";
+import { PII_SCHEMA_VERSION } from "./piiSchemaVersion.js";
 // Only the WRITE side of the session is used. The vault never calls
 // `getSessionPassphrase()`: it holds the non-extractable derived `CryptoKey`,
 // so there is no passphrase string to re-read on the hot path, and
@@ -76,11 +72,19 @@ import {
 import {
   setSessionPassphrase,
   zeroizeSessionPassphrase,
-} from "./passphraseSession";
-import type {
-  PiiStoreDenialReason,
-  PiiStoreEnvironment,
-} from "./piiStoreCapability";
+} from "./passphraseSession.js";
+import {
+  piiStoreRefusalReason,
+  setPiiStoreEnvironment,
+  type PiiStoreDenialReason,
+  type PiiStoreEnvironment,
+} from "./piiStoreCapability.js";
+import {
+  idbFactoryFromGlobal,
+  openVaultIdb,
+  type VaultIdb,
+  type VaultIdbFactory,
+} from "./indexedDbPort.js";
 
 /** SPEC-01 key AND IndexedDB database name. One declared surface. */
 export const PII_VAULT_KEY = "open3dcalc_pii_vault";
@@ -269,93 +273,24 @@ function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** Per-factory open handle, so two stores in one database share one connection. */
-const dbHandles = new WeakMap<IDBFactory, Promise<IDBDatabase>>();
-
-// ---------------------------------------------------------------------------
-//  IndexedDB plumbing
-// ---------------------------------------------------------------------------
-
-function requestResult<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () =>
-      reject(request.error ?? new Error("[piiStore] idb request failed"));
-  });
-}
-
 /**
- * Resolve when the transaction commits.
- *
- * The handlers are attached at CREATION time, before the first `await`. This
- * is not stylistic: a transaction that has already drained its request queue
- * auto-commits, so attaching `oncomplete` after awaiting the request is a race
- * that hangs forever on a real implementation.
+ * One port per factory, so every store in one database shares one connection.
+ * Weak on the factory: a discarded factory takes its handle with it, which is
+ * what lets tests run against a fresh in-memory origin without leaking state.
  */
-function transactionDone(tx: IDBTransaction): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () =>
-      reject(tx.error ?? new Error("[piiStore] idb transaction failed"));
-    tx.onabort = () =>
-      reject(tx.error ?? new Error("[piiStore] idb transaction aborted"));
-  });
-}
+const vaultPorts = new WeakMap<VaultIdbFactory, VaultIdb>();
 
-function openVault(factory: IDBFactory): Promise<IDBDatabase> {
-  const existing = dbHandles.get(factory);
+function portFor(factory: VaultIdbFactory): VaultIdb {
+  const existing = vaultPorts.get(factory);
   if (existing) return existing;
-  const opening = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = factory.open(PII_VAULT_KEY, VAULT_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(PII_VAULT_STORE)) {
-        db.createObjectStore(PII_VAULT_STORE);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () =>
-      reject(request.error ?? new Error("[piiStore] idb open failed"));
-    request.onblocked = () =>
-      reject(new Error("[piiStore] idb open blocked by another connection"));
-  });
-  dbHandles.set(factory, opening);
-  return opening;
-}
-
-async function readRawRecord(
-  factory: IDBFactory,
-  key: string,
-): Promise<string | null> {
-  const db = await openVault(factory);
-  const tx = db.transaction(PII_VAULT_STORE, "readonly");
-  const done = transactionDone(tx);
-  const value = await requestResult(tx.objectStore(PII_VAULT_STORE).get(key));
-  await done;
-  return typeof value === "string" ? value : null;
-}
-
-async function writeRawRecord(
-  factory: IDBFactory,
-  key: string,
-  envelope: string,
-): Promise<void> {
-  const db = await openVault(factory);
-  const tx = db.transaction(PII_VAULT_STORE, "readwrite");
-  const done = transactionDone(tx);
-  await requestResult(tx.objectStore(PII_VAULT_STORE).put(envelope, key));
-  await done;
-}
-
-async function deleteRawRecord(
-  factory: IDBFactory,
-  key: string,
-): Promise<void> {
-  const db = await openVault(factory);
-  const tx = db.transaction(PII_VAULT_STORE, "readwrite");
-  const done = transactionDone(tx);
-  await requestResult(tx.objectStore(PII_VAULT_STORE).delete(key));
-  await done;
+  const port = openVaultIdb(
+    factory,
+    PII_VAULT_KEY,
+    PII_VAULT_STORE,
+    VAULT_VERSION,
+  );
+  vaultPorts.set(factory, port);
+  return port;
 }
 
 // ---------------------------------------------------------------------------
@@ -549,8 +484,16 @@ async function open(raw: string, held: HeldKey, key: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 export interface PiiStoreOptions {
-  /** Injected IndexedDB. Defaults to `globalThis.indexedDB`. */
-  indexedDb?: IDBFactory | undefined;
+  /**
+   * The IndexedDB to write into, injected rather than reached for.
+   *
+   * EXPLICIT AND INJECTABLE ON PURPOSE. The Electron main process has no
+   * IndexedDB, so a module that read the global ambiently would either fail to
+   * compile there or, worse, compile and throw at call time. Injected, the
+   * absence is a typed refusal (`indexeddb_unavailable`) instead of a crash.
+   * Defaults to `globalThis.indexedDB` when one is present.
+   */
+  indexedDb?: VaultIdbFactory | undefined;
   /**
    * Capability overrides merged over the sampled environment. The vault is
    * fail-closed, so an override is how a caller states "this context is fine"
@@ -560,16 +503,27 @@ export interface PiiStoreOptions {
   environment?: Partial<PiiStoreEnvironment> | undefined;
 }
 
-function defaultFactory(options: PiiStoreOptions): IDBFactory | null {
-  if (options.indexedDb) return options.indexedDb;
-  const global = (globalThis as Record<string, unknown>).indexedDB;
-  return (global as IDBFactory | undefined) ?? null;
+function factoryFrom(options: PiiStoreOptions): VaultIdbFactory | null {
+  return options.indexedDb ?? idbFactoryFromGlobal();
 }
 
-function isSecureContextNow(): boolean | undefined {
-  const scope = globalThis as Record<string, unknown>;
-  if (typeof scope.window === "undefined") return undefined;
-  return (scope.window as { isSecureContext?: boolean }).isSecureContext;
+/**
+ * Is there a browser here, and is it a secure origin?
+ *
+ * A guarded read, never a module-scope global: the Electron main process has
+ * no `window`, so sampling it at import time would throw there. The
+ * `typeof` check makes "no browser" a REPORTED fact (`not_a_browser`) instead
+ * of a load-time crash.
+ */
+function sampleBrowser(): {
+  browser: boolean | undefined;
+  secureContext: boolean | undefined;
+} {
+  const scope = globalThis as { window?: { isSecureContext?: boolean } };
+  if (typeof scope.window === "undefined" || scope.window === null) {
+    return { browser: false, secureContext: undefined };
+  }
+  return { browser: true, secureContext: scope.window.isSecureContext };
 }
 
 /**
@@ -582,9 +536,9 @@ function isSecureContextNow(): boolean | undefined {
  */
 function installEnvironment(options: PiiStoreOptions): PiiStoreEnvironment {
   const sampled: PiiStoreEnvironment = {
-    secureContext: isSecureContextNow(),
+    ...sampleBrowser(),
     webCryptoAvailable: globalThis.crypto?.subtle !== undefined,
-    indexedDbAvailable: defaultFactory(options) !== null,
+    indexedDbAvailable: factoryFrom(options) !== null,
   };
   const merged: PiiStoreEnvironment = { ...sampled, ...options.environment };
   setPiiStoreEnvironment(merged);
@@ -621,7 +575,7 @@ export async function unlockPiiStore(
   options: PiiStoreOptions = {},
 ): Promise<void> {
   installEnvironment(options);
-  const factory = defaultFactory(options);
+  const factory = factoryFrom(options);
   if (factory === null) {
     throw new PiiStoreDeniedError("indexeddb_unavailable");
   }
@@ -633,7 +587,7 @@ export async function unlockPiiStore(
   const refusal = piiStoreRefusalReason(false);
   if (refusal !== null) throw new PiiStoreDeniedError(refusal);
 
-  const raw = await readRawRecord(factory, key);
+  const raw = await portFor(factory).get(key);
   // The store's salt is the one already in the record, or a fresh random one
   // when there is no record yet. Keeping it in the record is what makes the
   // record self-describing across a page reload.
@@ -694,12 +648,21 @@ export function createPiiStore(
   options: PiiStoreOptions = {},
 ): PiiStore {
   installEnvironment(options);
-  const factory = defaultFactory(options);
+  // Refuse AT CONSTRUCTION when this environment can never support the vault.
+  // Every operation would refuse anyway, but an inert handle is an invitation:
+  // a future caller could hold one, assume it works, and ship a path that
+  // silently persists nothing. `locked` is deliberately NOT consulted here — a
+  // handle is created before any passphrase exists, and the per-operation check
+  // covers the lock.
+  const refusal = piiStoreRefusalReason(false);
+  if (refusal !== null) throw new PiiStoreDeniedError(refusal);
+  const factory = factoryFrom(options);
 
-  function requireFactory(): IDBFactory {
-    if (factory === null)
+  function requirePort(): VaultIdb {
+    if (factory === null) {
       throw new PiiStoreDeniedError("indexeddb_unavailable");
-    return factory;
+    }
+    return portFor(factory);
   }
 
   /** Every read and write goes through here. A refusal is never silent. */
@@ -724,7 +687,7 @@ export function createPiiStore(
     async read(): Promise<string | null> {
       requireAllowed();
       const held = requireHeld();
-      const raw = await readRawRecord(requireFactory(), key);
+      const raw = await requirePort().get(key);
       if (raw === null) return null;
       return open(raw, held, key);
     },
@@ -736,7 +699,7 @@ export function createPiiStore(
         // rejected write cannot damage the record it failed to replace.
         throw new PiiStoreWriteError("unserializable_value");
       }
-      const idb = requireFactory();
+      const idb = requirePort();
       const held = requireHeld();
       // Seal outside the queue: the queue exists to serialise TRANSACTIONS,
       // and holding one open across an `await` of the cipher is the
@@ -749,7 +712,7 @@ export function createPiiStore(
       );
       await enqueue(key, async () => {
         try {
-          await writeRawRecord(idb, key, envelope);
+          await idb.put(key, envelope);
         } catch {
           throw new PiiStoreWriteError("commit_failed");
         }
@@ -758,10 +721,10 @@ export function createPiiStore(
 
     async remove(): Promise<void> {
       requireAllowed();
-      const idb = requireFactory();
+      const idb = requirePort();
       await enqueue(key, async () => {
         try {
-          await deleteRawRecord(idb, key);
+          await idb.delete(key);
         } catch {
           throw new PiiStoreWriteError("commit_failed");
         }
@@ -770,7 +733,7 @@ export function createPiiStore(
 
     async exists(): Promise<boolean> {
       requireAllowed();
-      return (await readRawRecord(requireFactory(), key)) !== null;
+      return (await requirePort().get(key)) !== null;
     },
   };
 }
@@ -845,4 +808,4 @@ export function piiPersistStorage<S>(
 export type {
   PiiStoreEnvironment,
   PiiStoreDenialReason,
-} from "./piiStoreCapability";
+} from "./piiStoreCapability.js";

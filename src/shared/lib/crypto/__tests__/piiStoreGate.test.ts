@@ -27,14 +27,14 @@ import {
   type PiiStoreDenialReason,
   type PiiStoreEnvironment,
 } from "@/shared/lib/crypto/piiStoreCapability";
+import { setDemoPersistenceSuppressed } from "@/shared/lib/manifestStorage";
 import {
   isPiiPersistenceDeclined,
   isPiiStoreAllowed,
   piiStoreRefusalReason,
-  setDemoPersistenceSuppressed,
   setPiiPersistenceDeclined,
   setPiiStoreEnvironment,
-} from "@/shared/lib/manifestStorage";
+} from "@/shared/lib/crypto/piiStoreCapability";
 import {
   createPiiStore,
   lockAllPiiStores,
@@ -54,6 +54,7 @@ const KEY = "open3dcalc_customers_v1";
 
 /** A fully capable environment — the baseline each denial is measured against. */
 const CAPABLE: PiiStoreEnvironment = {
+  browser: true,
   secureContext: true,
   webCryptoAvailable: true,
   indexedDbAvailable: true,
@@ -120,6 +121,16 @@ describe("PII vault gate: refusal is typed and total", () => {
         "insecure_context",
       ],
       [
+        "not a browser",
+        {
+          demoSuppressed: false,
+          environment: { ...CAPABLE, browser: false },
+          declined: false,
+          locked: false,
+        },
+        "not_a_browser",
+      ],
+      [
         "user declined",
         {
           demoSuppressed: false,
@@ -160,6 +171,7 @@ describe("PII vault gate: refusal is typed and total", () => {
     // `undefined` as "probably fine" would turn a jsdom/old-browser gap into
     // plaintext-by-accident the moment a fallback were ever added.
     const ambiguous: PiiStoreEnvironment = {
+      browser: undefined,
       secureContext: undefined,
       webCryptoAvailable: undefined,
       indexedDbAvailable: undefined,
@@ -171,7 +183,36 @@ describe("PII vault gate: refusal is typed and total", () => {
         declined: false,
         locked: false,
       }),
+    ).toBe("not_a_browser");
+    // Still true once the browser question is settled: an undefined secure
+    // context on a real browser is a denial too.
+    expect(
+      resolvePiiStoreRefusal({
+        demoSuppressed: false,
+        environment: { ...ambiguous, browser: true },
+        declined: false,
+        locked: false,
+      }),
     ).toBe("insecure_context");
+  });
+
+  it("names a non-browser runtime as such, not as an insecure context", () => {
+    // The Electron main process has no `window` at all. It is not an insecure
+    // context, and telling a desktop user their context is insecure sends them
+    // looking for a TLS problem they do not have.
+    expect(
+      resolvePiiStoreRefusal({
+        demoSuppressed: false,
+        environment: {
+          browser: false,
+          secureContext: undefined,
+          webCryptoAvailable: true,
+          indexedDbAvailable: false,
+        },
+        declined: false,
+        locked: false,
+      }),
+    ).toBe("not_a_browser");
   });
 
   it("reports the most fundamental refusal, and session state last", () => {
@@ -245,22 +286,49 @@ describe("PII vault gate: one choke point with demo suppression", () => {
     // browser without IndexedDB is denied instead of silently allowed.
     setPiiStoreEnvironment(null);
     vi.stubGlobal("indexedDB", undefined);
-    createPiiStore(KEY);
     // jsdom reports `isSecureContext` as undefined, and undefined is a denial.
+    // Refused at CONSTRUCTION, not on first use: an inert handle is an
+    // invitation for a caller to assume it works.
+    expect(() => createPiiStore(KEY)).toThrow(PiiStoreDeniedError);
     expect(piiStoreRefusalReason(false)).toBe("insecure_context");
 
     // A real global factory is picked up: only the unobservable context denies.
     vi.stubGlobal("indexedDB", createFakeIndexedDb().factory);
-    createPiiStore(KEY);
+    expect(() => createPiiStore(KEY)).toThrow(PiiStoreDeniedError);
     expect(piiStoreRefusalReason(false)).toBe("insecure_context");
     createPiiStore(KEY, { environment: { secureContext: true } });
     expect(piiStoreRefusalReason(false)).toBeNull();
 
     // And removing it again is the other half of the sample.
     vi.stubGlobal("indexedDB", undefined);
-    createPiiStore(KEY, { environment: { secureContext: true } });
+    expect(() =>
+      createPiiStore(KEY, { environment: { secureContext: true } }),
+    ).toThrow(PiiStoreDeniedError);
     expect(piiStoreRefusalReason(false)).toBe("indexeddb_unavailable");
     vi.unstubAllGlobals();
+  });
+
+  it("refuses to construct in a NON-BROWSER runtime, naming it as such", () => {
+    // The Electron main process: Node, no `window`, no IndexedDB. The module
+    // must LOAD there (it is inside the electron tsconfig include glob) and
+    // then refuse, with a reason that does not tell a desktop user their
+    // context is insecure.
+    const nonBrowser: PiiStoreEnvironment = {
+      browser: false,
+      secureContext: undefined,
+      webCryptoAvailable: true,
+      indexedDbAvailable: false,
+    };
+    const error = (() => {
+      try {
+        createPiiStore(KEY, { environment: nonBrowser });
+        return null;
+      } catch (e: unknown) {
+        return e;
+      }
+    })();
+    expect(error).toBeInstanceOf(PiiStoreDeniedError);
+    expect((error as PiiStoreDeniedError).reason).toBe("not_a_browser");
   });
 
   it("reads the declined flag live, so a consent change takes effect at once", () => {

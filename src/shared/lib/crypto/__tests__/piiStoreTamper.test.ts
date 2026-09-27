@@ -31,6 +31,7 @@ import {
   encryptWithPassphrase,
   type EnvelopeExpectation,
 } from "@/shared/lib/crypto/envelope";
+import type { VaultIdbFactory } from "@/shared/lib/crypto/indexedDbPort";
 import {
   createPiiStore,
   lockAllPiiStores,
@@ -40,11 +41,11 @@ import {
   vaultExpectationFor,
   PII_VAULT_STORE,
 } from "@/shared/lib/crypto/piiStore";
+import { setDemoPersistenceSuppressed } from "@/shared/lib/manifestStorage";
 import {
-  setDemoPersistenceSuppressed,
   setPiiPersistenceDeclined,
   setPiiStoreEnvironment,
-} from "@/shared/lib/manifestStorage";
+} from "@/shared/lib/crypto/piiStoreCapability";
 import { zeroizeSessionPassphrase } from "@/shared/lib/crypto/passphraseSession";
 import { PII_STORE_ENVIRONMENT } from "@/shared/lib/crypto/__tests__/piiStoreFixtures";
 import {
@@ -62,7 +63,7 @@ const PAYLOAD =
 
 type Record_ = Record<string, unknown>;
 type Options = {
-  indexedDb: IDBFactory;
+  indexedDb: VaultIdbFactory;
   environment: typeof PII_STORE_ENVIRONMENT;
 };
 

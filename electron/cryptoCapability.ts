@@ -24,6 +24,9 @@ import {
 import {
   encryptWithPassphrase,
   decryptWithPassphrase,
+  AT_REST_PURPOSE,
+  CURRENT_ENVELOPE_FORMAT_VERSION,
+  type EnvelopeExpectation,
 } from "../src/shared/lib/crypto/envelope.js";
 import {
   setSessionPassphrase,
@@ -42,6 +45,39 @@ export const CRYPTO_WRITE_PATH_ENABLED = true;
 
 const SAFE_STORAGE_PREFIX = "enc1:safeStorage:";
 const ENVELOPE_PREFIX = "enc1:envelope:";
+
+/**
+ * `schemaVersion` (S) of the at-rest AAD.
+ *
+ * The trusted source for S is the per-key `version` in the shipped SPEC-01
+ * manifest (`dataManifest.ManifestEntry`). The main process cannot reach that
+ * fixture yet — it is loaded over `fs` rather than an ESM JSON import, which is
+ * why this layer deliberately does not import the manifest — so the agreed
+ * value is pinned here.
+ *
+ * It is a constant, not a lookup, and that is a KNOWN SHORTCOMING: a constant
+ * is only as trusted as the review that pins it. When the manifest becomes
+ * reachable from this layer, this MUST become a per-key lookup, or a manifest
+ * version bump will silently re-label every existing envelope's `S` and strand
+ * it. Tracked as a follow-up with the Electron profile-key work.
+ */
+const PII_SCHEMA_VERSION = 1;
+
+/**
+ * The caller-trusted AAD expectation for one storage key (ADR-001 §2.4).
+ *
+ * Built from `key` — the argument the CALLER passed, not anything read back
+ * out of the ciphertext. The reader treats the envelope's own copy of these
+ * four values as unauthenticated metadata and compares it to this.
+ */
+function expectationFor(key: string): EnvelopeExpectation {
+  return {
+    key,
+    purpose: AT_REST_PURPOSE,
+    schemaVersion: PII_SCHEMA_VERSION,
+    envelopeFormatVersion: CURRENT_ENVELOPE_FORMAT_VERSION,
+  };
+}
 
 export class CryptoDeniedError extends Error {
   readonly code = "crypto_denied";
@@ -132,10 +168,11 @@ export async function encryptForStorage(
   if (capability.mode === "passphrase") {
     const passphrase = getSessionPassphrase();
     if (passphrase === null) throw new CryptoDeniedError(capability.reason);
-    const envelope = await encryptWithPassphrase(plaintext, passphrase, {
-      purpose: "at-rest",
-      key,
-    });
+    const envelope = await encryptWithPassphrase(
+      plaintext,
+      passphrase,
+      expectationFor(key),
+    );
     return ENVELOPE_PREFIX + envelope;
   }
   throw new CryptoDeniedError(capability.reason);
@@ -146,9 +183,23 @@ export async function encryptForStorage(
  * legacy plaintext written before S2) raise UnknownBlobError — legacy data
  * enters the ADR-002 quarantine regime, it is never silently re-read or
  * re-encrypted here (S4 wires the quarantine flows).
+ *
+ * `key` is LOAD-BEARING. It becomes the `K` component of the AAD, so a blob
+ * written under one storage key cannot be read back under another; the
+ * argument was previously accepted and discarded (`_key`), which meant the
+ * passphrase envelope was decryptable from any call site.
+ *
+ * KNOWN LIMITATION — the `safeStorage` branch binds NO AAD at all.
+ * `safeStorage.encryptString` takes no associated data, so a value written
+ * that way is not bound to its storage key, purpose or schema version: the
+ * blob is a sealed string with no authenticated context. Closing that gap
+ * needs a `safeStorage`-wrapped PROFILE DATA KEY (a random per-profile key
+ * sealed by the OS keyring) with the application envelope layered on top, so
+ * the AAD can be bound. Until that exists this branch is explicit about what
+ * it does not provide rather than pretending to.
  */
 export async function decryptFromStorage(
-  _key: string,
+  key: string,
   blob: string,
 ): Promise<string> {
   if (blob.startsWith(SAFE_STORAGE_PREFIX)) {
@@ -163,6 +214,7 @@ export async function decryptFromStorage(
     return decryptWithPassphrase(
       blob.slice(ENVELOPE_PREFIX.length),
       passphrase,
+      expectationFor(key),
     );
   }
   throw new UnknownBlobError();

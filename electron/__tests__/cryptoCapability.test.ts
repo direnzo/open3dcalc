@@ -151,6 +151,30 @@ describe("encryptForStorage / decryptFromStorage", () => {
     expect(locked.reason).not.toBe(noKeyring.reason);
   });
 
+  /**
+   * The `key` argument is load-bearing, not decoration.
+   *
+   * `decryptFromStorage` used to accept the key and discard it (`_key`), so
+   * the passphrase envelope carried no binding to the storage key it was
+   * written under: any call site could hand back any blob. With the AAD built
+   * from the caller's key, a blob read under the wrong key must fail — this is
+   * the test that would have caught the defect, and it fails if the argument
+   * ever goes back to being ignored.
+   */
+  it("a blob written under one key does not decrypt under another", async () => {
+    hoisted.mockSafeStorage.isEncryptionAvailable.mockReturnValue(false);
+    adoptSessionPassphrase("sessão-sintética-3131");
+    const blob = await encryptForStorage("open3dcalc_customers_v1", MARKER);
+    // …it does decrypt under its own key …
+    expect(await decryptFromStorage("open3dcalc_customers_v1", blob)).toBe(
+      MARKER,
+    );
+    // …and not under a different one, even with the right passphrase in hand.
+    await expect(
+      decryptFromStorage("open3dcalc_quotes_v1", blob),
+    ).rejects.toThrow(/envelope rejected/);
+  });
+
   it("wrong passphrase after write is rejected (envelope integrity)", async () => {
     hoisted.mockSafeStorage.isEncryptionAvailable.mockReturnValue(false);
     adoptSessionPassphrase("sessão-sintética-3131");

@@ -94,29 +94,215 @@ Notes:
   resolves to DENIED, never to plaintext.
 - Capability probing happens at startup and on demand; results are cached in memory only.
 
-## 3. Consequences
+## 3. The authenticated-encryption contract (at-rest envelope)
+
+The at-rest envelope is specified in `src/shared/lib/crypto/envelope.ts`. Its AAD is
+the whole security contract, so it is written here as bytes, not prose.
+
+### 3.1 The exact AAD byte string
+
+The additional authenticated data is the UTF-8 encoding of five fields joined by a
+single NUL (`U+0000`) each:
+
+```
+"open3dcalc-pii-at-rest" NUL <K> NUL <P> NUL "schema:<S>" NUL "envelope:<F>"
+```
+
+| Slot | Symbol | Meaning                                                               |
+| ---- | ------ | --------------------------------------------------------------------- |
+| 1    | —      | Domain separator: `open3dcalc-pii-at-rest`                            |
+| 2    | `K`    | Storage key NAME (e.g. `open3dcalc_customers_v1`) — metadata, not PII |
+| 3    | `P`    | Stable crypto-purpose identifier (e.g. `at-rest`)                     |
+| 4    | `S`    | `schemaVersion` — logical schema of the protected value               |
+| 5    | `F`    | `envelopeFormatVersion` — wire format of the sealed record            |
+
+Constraints, all enforced by `validateEnvelopeExpectation`:
+
+- `K` and `P` MUST NOT contain NUL. NUL is the only separator, so a NUL inside a
+  component could make two different expectations serialise to identical bytes, and
+  the AAD would then bind nothing. A NUL is rejected with `EnvelopeAadInvalidError`
+  rather than producing an ambiguous AAD.
+- `S` and `F` are **positive integers** serialised in canonical decimal: no sign, no
+  leading zero, no exponent. One integer therefore has exactly one byte
+  representation, and `1` can never mean something different from `01`.
+- The byte string is a fixed layout, not a key-ordered JSON encoding. Sorting keys
+  is what let the old binding be re-derived from the ciphertext; the offsets here
+  are normative and are asserted in `__tests__/envelope.test.ts` against a
+  hand-written literal.
+
+### 3.2 Caller-trusted, never self-asserted
+
+Decryption receives `K`, `P`, `S` and `F` from the trusted manifest/storage contract
+and builds the AAD itself. **There is no decrypt overload that omits them.**
+
+The envelope still carries the four values, but they are _unauthenticated metadata_:
+they are compared against the caller's expectation and a mismatch is a rejection
+(`metadata_mismatch`), and they are never used to derive the AAD. Consequently a
+ciphertext copied under a different key, purpose, `S` or `F` fails GCM
+authentication, independently in each of the four dimensions.
+
+The defect this replaced: the reader took the key name from the ciphertext and
+re-derived the AAD from it, so a ciphertext moved to another key decrypted cleanly,
+and the production `decryptFromStorage(key, blob)` accepted its `key` argument and
+discarded it.
+
+### 3.3 Two version dimensions, and the envelope version
+
+Three versions are in play and they are not interchangeable:
+
+| Version | Type             | Changes when                                            |
+| ------- | ---------------- | ------------------------------------------------------- |
+| `v`     | envelope version | The sealed record's own format; dispatches the reader   |
+| `F`     | positive integer | The envelope format the storage layer believes it wrote |
+| `S`     | positive integer | The logical schema of the protected value               |
+
+`S` and `F` are distinct axes on purpose: a value can keep its schema while the
+sealed record changes shape, and a migration that bumps one must not silently bump
+the other.
+
+`v` selects a **version-specific reader**. The pre-remediation `1.1` envelope
+authenticated `canonicalJson({purpose, key})` with both halves read back out of the
+ciphertext, so its binding proved nothing about provenance, and it cannot be
+re-authenticated under §3.1 — the tag covers the old bytes and cannot be re-signed.
+The `1.1` reader therefore **fails closed and says so** (`legacy_self_asserted_aad`);
+it is not silently reinterpreted as `2.0`. A live `1.1` value has to be re-encrypted
+under `2.0` from a trusted read of the old envelope and the `1.1` blob deleted — a
+storage-layer migration, not a crypto one. An unrecognised `v` is refused separately
+(`unknown_envelope_version`) so an operator can tell "we can see this and cannot
+trust it" from "this is from the future".
+
+### 3.4 Key lifecycle
+
+- **Passphrase (fallback path):** user-supplied, held in main-process memory for the
+  session only, zeroized on lock/exit. Never persisted, never logged, never sent to
+  argv/env. The at-rest key is derived per envelope from a fresh 128-bit salt at
+  PBKDF2-SHA256 with exactly 310,000 iterations; there is no stored derived key to
+  leak, rotate or revoke. Consequence: a value written in one session is unreadable
+  until the passphrase is re-entered, which is the intended trade-off.
+- **`safeStorage` (primary path):** the OS keyring owns the key; the app never sees
+  or stores it. **Known limitation, stated rather than implied:** `safeStorage`
+  exposes no associated-data parameter, so a `safeStorage` blob is bound to nothing —
+  not to its storage key, purpose, `S` or `F`. Closing that needs a
+  `safeStorage`-wrapped **profile data key** (a random per-profile key sealed by the
+  OS keyring) with the application envelope layered on top. Until that exists, the
+  `safeStorage` branch is protected by OS key availability and by the deny path, and
+  by nothing else. Tracked as follow-up work, not as delivered.
+
+### 3.5 KDF work factor — inconsistency, deliberately unresolved
+
+Three PBKDF2-SHA256 work factors exist in the repo: 310,000 in `crypto/envelope.ts`
+and in `exportEnvelope.ts` (the SPEC-03 value), and **100,000** in `dataSync.ts`,
+which its own header documents as "100.000" and which it genuinely derives with. This
+ADR retains the current factors and does **not** change them in the contract
+remediation: a KDF parameter is not a value you can edit in place, since changing it
+makes every existing ciphertext undecryptable. Bringing the 100,000 path to 310,000 is
+separate, versioned work — a new envelope version, a read path that derives with the
+declared factor rather than the compiled-in one, and a migration that re-encrypts
+existing bundles. It is **out of scope here and still open.**
+
+### 3.6 Version migration obligation — 1.1 envelopes now fail closed
+
+**Status: NOT IMPLEMENTED. This is not a W1 deliverable.**
+
+Bumping the envelope version is a data-affecting change, not a code-only one, and the
+affected data is real: packaged Electron builds have run against real profiles, so a
+live profile can hold `enc1:envelope:` rows written as `1.1`.
+
+**Which stored shapes are affected**
+
+| Stored shape                                                                                                                                      | Affected | Notes                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `enc1:envelope:<json>` in the SQLite `storage` table (`key`/`value` columns) under a manifest `pii: true` key, in the Electron `userData` profile | **Yes**  | Written only when `safeStorage` was unavailable AND a session passphrase was held (ADR-001 §2.1, row 2.2) |
+| `enc1:safeStorage:<base64>`                                                                                                                       | No       | Unaffected by this change — but see §3.4: it was never context-bound                                      |
+| Domain tables `customers`, `quotes`, `quote_items`, `history_entries`                                                                             | No       | Not written through the envelope path                                                                     |
+| Browser / PWA `localStorage`, IndexedDB, OPFS, Cache API                                                                                          | No       | The web build never calls the envelope path — see below                                                   |
+| `dataSync.ts` / SPEC-03 export bundles                                                                                                            | No       | A different format with its own AAD (`canonicalJson`), untouched here                                     |
+
+**Reachability in the web build: none.** `enc1:envelope:` is produced in exactly one
+place, `electron/cryptoCapability.ts`, which runs only in the Electron main process.
+The shared capability decision engine (`crypto/capability.ts`) is pure and has no
+platform injection on web, and no module under `src/platform/web/**` imports the
+envelope. The web row of the §2.3 table is still a _contract_, not an implementation:
+the web build writes PII to `localStorage` **unencrypted**, which is the §6 gap and is
+unaffected by this change. A browser profile therefore cannot contain an
+`enc1:envelope:` row.
+
+**What happens to an affected row now.** The versioned reader recognises `1.1` and
+refuses it with `legacy_self_asserted_aad`. That is fail-closed by design — the `1.1`
+AAD cannot be re-authenticated under §3.1 — but the operational consequence is that
+those values are currently unreadable by the app.
+
+**Recovery: copy-and-verify, never delete.**
+
+1. Read the `1.1` value **through a `1.1`-capable reader that still honours its own
+   self-asserted AAD**, holding the result only in memory. That reader must be
+   quarantined to this migration and must not become the general read path — the
+   defect this ADR remediates is precisely that self-assertion.
+2. Re-encrypt that plaintext under `2.0` using the caller-trusted expectation for its
+   key, purpose, `S` and `F`.
+3. **Verify** the `2.0` envelope decrypts back to the same plaintext, then write it
+   alongside.
+4. Only after verification may the `1.1` blob be removed — and the copy-then-verify
+   order is not negotiable: overwriting or deleting a `1.1` blob in place destroys the
+   only copy of a value that may not be recoverable from any other source, since the
+   passphrase fallback means it was never replicated anywhere else.
+
+This matches the approved mode in which legacy sources are retained as **disclosed
+residue** rather than silently purged; the migration must report what it moved and
+what it left behind. A value that cannot be decrypted (wrong or absent passphrase,
+corrupt `1.1` blob) must be surfaced to the user as unrecoverable, not dropped.
+
+**Not implemented.** The contract remediation changes only the reader. No migration
+code, no quarantine reader, no telemetry and no UI exist. Any window in which a `1.1`
+value is unreadable is therefore still open, and this section is the tracking
+obligation for it — not a description of shipped behaviour.
+
+## 4. Consequences
 
 - **Positive:** no plaintext PII at rest on any supported platform; a stolen SQLite file,
   `localStorage` dump, or `userData` directory does not yield customer data without the
-  OS-backed key or the passphrase; the model is testable (TEST-MATRIX §2, §3).
+  OS-backed key or the passphrase; a ciphertext cannot be silently relocated between
+  keys, purposes or schema generations; the model is testable (TEST-MATRIX §2, §3).
 - **Negative:** without `safeStorage` and without a passphrase, PII features are degraded —
   this is an accepted, explicit trade-off in favor of confidentiality; passphrase fallback
   means PII is unreadable across sessions until the passphrase is re-entered.
 - **Migration:** existing plaintext PII does NOT silently become encrypted. It enters the
   quarantine regime of ADR-002 until migrated or eliminated by explicit user action.
+  Existing `1.1` envelopes likewise fail closed and require the §3.3 re-encryption.
+- **Cost:** a caller that supplies a wrong `S` or `F` loses access to its own data. That
+  is the intended failure mode, and it is why those two values belong to the storage
+  contract rather than to a constant inside the crypto module.
 
-## 4. What D1.0 does NOT deliver
+## 5. What this ADR explicitly does NOT claim
+
+- **This is application-level encryption of current logical values.** It protects a
+  value as it sits in the store right now. It is not a claim about the whole profile.
+- **It is not protection against an unlocked-runtime compromise.** While a session is
+  unlocked — or a passphrase is in main-process memory — the plaintext exists in
+  memory and is reachable by anything running as the user. The contract is about what
+  the _stored bytes_ are bound to, not about defending a live process.
+- **It is not secure erasure of historical copies.** Encrypting a value now says
+  nothing about copies that already exist: SQLite WAL/journal residue, `userData`
+  backups, OS-level snapshots, diagnostic bundles, previously exported bundles, and
+  copies the user has already made. Erasure is SPEC-02's job, and it can only be as
+  good as its enumeration of the surfaces that hold copies.
+- **It does not make the `safeStorage` path context-bound.** See §3.4.
+- **It does not resolve the KDF inconsistency.** See §3.5.
+
+## 6. What D1.0 does NOT deliver
 
 This ADR is a contract for D1.1+. As of D1.0, the runtime still writes PII in plaintext and
 `db:export` still copies a raw SQLite file; those are the gaps this ADR obligates D1.1+ to
 close. Nothing in this document claims that behavior is already implemented.
 
-## 5. Compliance trace
+## 7. Compliance trace
 
 - R3 → §2.1 (deny path, zero plaintext), §2.3 table rows 3.
 - R7 → §2.2 (web/PWA secure context + passphrase, blocked otherwise), §2.3 rows 4–6.
-- Cross-references: SPEC-01 (`persistence` enum, `plaintext_allowed` ⇔ `pii:false`), SPEC-02
-  (snapshot encryption uses the same capability model), SPEC-03 (envelope parameters),
+- Cross-device context binding → §3.1, §3.2.
+- Cross-references: SPEC-01 (`persistence` enum, `plaintext_allowed` ⇔ `pii:false`, and
+  the per-key `version` that is the trusted source of `S`), SPEC-02 (snapshot encryption
+  uses the same capability model), SPEC-03 (export envelope parameters),
   TEST-MATRIX §2 (capability matrix tests), §3 (deny-path tests).
 
 ## Status

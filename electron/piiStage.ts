@@ -138,6 +138,18 @@ function readStoredValue(db: StageDb, key: string): string | null {
  *
  * Returns the row as it reads back from disk, not the row that was passed in —
  * the return value IS the proof.
+ *
+ * KNOWN LIMITATION — the re-read verifies `blob` and NOTHING ELSE. `state`,
+ * `privacy_epoch`, `schema_version`, `envelope_version`, `generation` and
+ * `created_at` are written and returned without being compared, so a store that
+ * corrupted any of them would still pass this proof and the caller would get a
+ * row back that does not say what it says. That is a deliberate trade: the blob
+ * is the payload, and the blob is what a silent corruption would actually lose
+ * or mangle. The metadata is either a caller-supplied literal (a schema version
+ * does not drift under a transport) or is re-verified where it is load-bearing —
+ * `markStageApplied` compares `state` on its own round trip. Anyone who makes
+ * the remaining columns matter to a correctness decision has to widen this
+ * comparison; do not read "it returned a row" as "every column is proven".
  */
 export function stagePreimage(db: StageDb, row: PiiStageRow): PiiStageRow {
   const write = db.transaction((): PiiStageRow => {

@@ -82,6 +82,12 @@ function storedStageBlob(): string | undefined {
   )?.blob;
 }
 
+/** Every `storage` key currently holding the sealed preimage, in key order. */
+async function preimageHolders(): Promise<string[]> {
+  const keys = await sqliteBackedDb().listKeys();
+  return keys.filter((k) => storedValue(k) === SEALED);
+}
+
 /**
  * `window.electronAPI.db` over a real SQLite file, statement for statement the
  * handlers in `electron/main.ts` use.
@@ -118,6 +124,13 @@ function sqliteBackedDb(): ElectronAPI["db"] {
 }
 
 beforeEach(() => {
+  // First: the teardown loop iterates `registered`, so it must be iterable even
+  // when the setup below throws. Assigned further down, it was `undefined` here
+  // and a failing `beforeEach` made `afterEach` throw
+  // `TypeError: registered is not iterable` — which replaced the test's own
+  // failure with a teardown failure two stacks deeper.
+  registered = [];
+
   vi.useFakeTimers();
   localStorage.clear();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "o3dc-stage-sweep-"));
@@ -159,7 +172,6 @@ beforeEach(() => {
 
   // initPersistenceBridge() adds one beforeunload listener per call; they close
   // over this spec's db, so they are torn down per spec.
-  registered = [];
   const add = window.addEventListener.bind(window);
   vi.spyOn(window, "addEventListener").mockImplementation(
     (
@@ -237,16 +249,31 @@ describe("pii_stage vs. the 10 s persistence-bridge sweep", () => {
     expect(storedValue(INTERNAL_KEY)).toBeNull();
   });
 
-  it("the stage row is invisible to the key surface the sweep enumerates", async () => {
+  it("never puts the sealed preimage on the key surface the sweep enumerates", async () => {
+    // `deleteStaleKeys` iterates `db().listKeys()` — the `storage` keys. A
+    // `storage`-backed stage is on that surface BY CONSTRUCTION, whether or not
+    // the pass goes on to delete it, so the surface is checked on the VALUE:
+    // which keys hold the sealed preimage. The only ones allowed to are the two
+    // controls this test inserted itself.
+    //
+    // Asserting on key NAMES cannot do this, and the reason is worth recording:
+    // no `storage` key is ever literally called "pii_stage", so
+    // `expect(keys).not.toContain("pii_stage")` is a tautology over the schema
+    // and passes against a stage that IS a `storage` row. Equally, a
+    // `not.toBe(SEALED)` over `load(k)` does not discriminate either, because
+    // this spec's `load` shim mirrors `loadGated` and hands `enc1:plain:` back
+    // DECRYPTED — a storage-backed stage reads back as the marker, not the
+    // sealed bytes. The stored bytes are the only thing that tells them apart.
     await initPersistenceBridge();
-    // `deleteStaleKeys` iterates `db().listKeys()` — the storage keys. A stage
-    // row is not one of them, which is the mechanical reason it cannot be
-    // swept. (0001 seeds `open3dcalc_theme`, so the storage surface also holds
-    // rows this test did not put there; only the absence of `pii_stage` is the
-    // point.)
-    const keys = await sqliteBackedDb().listKeys();
-    expect(keys).toContain(ALLOWED_KEY);
-    expect(keys).toContain(INTERNAL_KEY);
-    expect(keys).not.toContain("pii_stage");
+    expect(await preimageHolders()).toEqual([ALLOWED_KEY, INTERNAL_KEY]);
+
+    // One cycle later the preimage is nowhere on the surface the sweep walks:
+    // control A is deleted (fate 1) and control B's row has been REWRITTEN as
+    // plaintext by `saveToDatabase`, which mirrors the renderer copy the
+    // startup pass just decrypted (fate 2, completing). Neither control is a
+    // stage, and a stage adds a third holder before the sweep even runs.
+    await vi.advanceTimersByTimeAsync(10_000);
+    const holders = await preimageHolders();
+    expect(holders).toEqual([]);
   });
 });

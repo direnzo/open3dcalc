@@ -35,6 +35,7 @@ import {
   type PayloadDb,
 } from "../erasurePayload.js";
 import { buildScanReport, summarizeReport } from "../legacyScan.js";
+import { PII_LEGACY_PLAINTEXT_TABLES } from "../piiDomainTables.js";
 import {
   createDiagnosticBackup,
   DiagnosticGateError,
@@ -47,13 +48,21 @@ import type { StoreAdapterLike } from "@/shared/lib/erasureSaga/types";
 const MARKER = "Fernanda Sintética <fernanda@exemplo.teste>";
 
 /**
- * Every PII-bearing normalized table in db/schema/index.ts. Declared here as a
- * test constant so the behavioral tests below run against the CURRENT shipped
- * code (not a helper this change introduces) and therefore fail before the fix.
+ * Every PII-bearing table declared on the SPEC-01 `sqlite_domain_tables`
+ * surface. Declared here as a test constant so the behavioral tests below run
+ * against the CURRENT shipped code (not a helper this change introduces) and
+ * therefore fail before the fix.
+ *
+ * `pii_stage` is here even though it is not in db/schema/index.ts: it is created
+ * by migration `0004_pii_stage.sql` and is a declared PII surface as of
+ * `policy_version` 1.6. A table that is PII-bearing but reachable only through a
+ * migration rather than the drizzle schema is exactly the shape of omission the
+ * Wave 0 `history_entries` defect had.
  */
 const EXPECTED_PII_TABLES = [
   "customers",
   "history_entries",
+  "pii_stage",
   "quote_items",
   "quotes",
 ] as const;
@@ -87,6 +96,13 @@ function seedProfile(): void {
   );
   db.exec(
     "CREATE TABLE IF NOT EXISTS history_entries (id TEXT PRIMARY KEY, timestamp INTEGER, type TEXT, name TEXT, summary TEXT, total_cost REAL, sell_price REAL, profit REAL, result_json TEXT, snapshot_json TEXT)",
+  );
+  // Present but EMPTY: this profile's premise is "every declared PII domain
+  // table exists", and the stage table is declared as of policy_version 1.6. The
+  // absent-table case has its own test below, and that is the one that has to
+  // keep passing.
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS pii_stage (transaction_id TEXT NOT NULL, generation INTEGER NOT NULL, privacy_epoch INTEGER NOT NULL, schema_version INTEGER NOT NULL, envelope_version INTEGER NOT NULL, state TEXT NOT NULL, blob TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (transaction_id, generation))",
   );
 
   db.prepare("INSERT INTO customers (id, name, email) VALUES (?, ?, ?)").run(
@@ -237,6 +253,7 @@ describe("buildScanReport / summarizeReport over the domain tables", () => {
       quotes: 1,
       quote_items: 1,
       history_entries: 7,
+      pii_stage: 0,
     });
     expect(report.domainTables.history_entries).toBe(7);
   });
@@ -247,6 +264,7 @@ describe("buildScanReport / summarizeReport over the domain tables", () => {
       quotes: 1,
       quote_items: 1,
       history_entries: 7,
+      pii_stage: 0,
     });
     const summary = summarizeReport(report);
     expect(summary).toContain("history_entries=7");
@@ -260,12 +278,38 @@ describe("buildScanReport / summarizeReport over the domain tables", () => {
       quotes: 1,
       quote_items: 1,
       history_entries: 1,
+      pii_stage: 0,
     });
-    const domainRows = Object.values(report.domainTables).reduce(
-      (a, b) => a + b,
+    const domainRows = PII_LEGACY_PLAINTEXT_TABLES.reduce(
+      (a, table) => a + (report.domainTables[table] ?? 0),
       0,
     );
     expect(domainRows).toBeGreaterThan(0);
+  });
+
+  it("a pii_stage row alone is NOT plaintext-domain residue (it is a sealed envelope)", () => {
+    // The gate sums `PII_LEGACY_PLAINTEXT_TABLES`, not every declared domain
+    // table. A stage row is always an `enc1:` envelope, so counting it would
+    // make every in-flight re-homing warn "legacy plaintext PII detected" —
+    // the same class of lie as the `history_entries` omission, in the other
+    // direction. Pinned here because the exclusion is a deletion: summing
+    // `Object.values(report.domainTables)` again would compile and pass.
+    const report = buildScanReport([], {
+      customers: 0,
+      quotes: 0,
+      quote_items: 0,
+      history_entries: 0,
+      pii_stage: 3,
+    });
+    const domainRows = PII_LEGACY_PLAINTEXT_TABLES.reduce(
+      (a, table) => a + (report.domainTables[table] ?? 0),
+      0,
+    );
+    expect(report.domainTables.pii_stage).toBe(3);
+    expect(domainRows).toBe(0);
+    // The table is still named in the report — counted for erasure, excluded
+    // from the plaintext verdict.
+    expect(summarizeReport(report)).toContain("pii_stage=3");
   });
 });
 

@@ -61,7 +61,13 @@ describe("buildScanReport / summarizeReport (metadata only)", () => {
         { key: "open3dcalc_quotes_v1", value: MARKER },
         { key: "open3dcalc_settings_v2", value: "{}" },
       ],
-      { customers: 2, quotes: 1, quote_items: 3, history_entries: 4 },
+      {
+        customers: 2,
+        quotes: 1,
+        quote_items: 3,
+        history_entries: 4,
+        pii_stage: 0,
+      },
     );
     expect(report.encryptedCount).toBe(1);
     expect(report.legacyCount).toBe(1);
@@ -70,6 +76,7 @@ describe("buildScanReport / summarizeReport (metadata only)", () => {
       quotes: 1,
       quote_items: 3,
       history_entries: 4,
+      pii_stage: 0,
     });
     expect(report.manifestAvailable).toBe(true);
 

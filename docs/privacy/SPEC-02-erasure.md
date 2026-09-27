@@ -107,7 +107,12 @@ deletes, each in its own transaction — `electron/piiStage.ts`).
 
 `PII_ERASURE_TABLES` in `electron/piiDomainTables.ts` is the single constant
 every one of those sites iterates (the four PII domain tables plus this one) —
-the direct consequence of the `history_entries` omission described below.
+the direct consequence of the `history_entries` omission described below. It is
+the same set as `PII_DOMAIN_TABLES`: `pii_stage` is a declared
+`sqlite_domain_tables` surface in SPEC-01 as of `policy_version` 1.6, so the
+pinned two-way list covers it. The two constants exist separately because they
+answer different questions — erasure coverage, versus what the ADR-002 startup
+scan is allowed to count as plaintext residue (§3.1, last paragraph).
 
 **Exempt from `db:import` validation.** `db/database.ts requiredTables()` derives
 the mandatory table list from the migration files by regex, so adding any table
@@ -143,14 +148,25 @@ survived — the list must never be duplicated per module. Adding a PII-bearing
 table requires adding it there, and declaring it `pii: true` on the
 `sqlite_domain_tables` surface in SPEC-01.
 
-**Known gap (tracked):** `pii_stage` is **not** yet declared on the
-`sqlite_domain_tables` surface in the SPEC-01 fixture. It is deliberately not in
-`PII_DOMAIN_TABLES` either — that list is pinned, in both directions, to the
-declared SPEC-01 surface, so adding an entry there is a privacy-contract change
-(a new declared PII surface means a `policy_version` bump, and consent receipts
-issued under the old policy stop validating per SPEC-04). Erasure, snapshot and
-backup coverage is complete; the manifest declaration is owed by the wave that
-updates SPEC-01.
+**Declared on the `sqlite_domain_tables` surface since `policy_version` 1.6.**
+The table was created by migration `0004_pii_stage.sql` and was PII-bearing from
+that moment, but it was absent from the SPEC-01 fixture — a real PII surface the
+privacy inventory did not name, which is the `history_entries` defect one layer
+out. Declaring it is a privacy-contract change, not bookkeeping: a new declared
+PII surface means a `policy_version` bump, so the version moved 1.5 → 1.6 and
+receipts issued under 1.5 stop validating (SPEC-04 §6). That re-consent cost no
+real user anything because nothing had shipped under 1.5 — but it is not a free
+edit, and the next declared surface will not get that exemption.
+
+**A `pii_stage` row is not legacy-plaintext evidence.** The table is erased,
+snapshotted and redacted like any other PII surface, but it is excluded from
+`PII_LEGACY_PLAINTEXT_TABLES` — the subset the ADR-002 §2.3 startup scan sums to
+decide whether the profile is clean. A stage row is always a sealed `enc1:`
+envelope, never plaintext, so counting it would make every in-flight re-homing
+warn "legacy plaintext PII detected". That is the same class of lie as the
+`history_entries` omission, in the other direction, and the exclusion is pinned
+by `piiDomainTables.test.ts` because it is a deletion: summing the full report
+again would compile and pass.
 
 ## 4. Journal format (per-store, resumable)
 

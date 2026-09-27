@@ -179,6 +179,32 @@ export function sqliteWalShmAdapter(
  * `dirname(dbPath) === userData` and the pre-import copies
  * `<userData>/open3dcalc.db.backup-<ts>` produced by `db:import` ARE covered by
  * this adapter on both purge and rescan.
+ *
+ * KNOWN GAP (pre-existing, recorded not fixed) — an operator-placed diagnostic
+ * backup in `userData` is outside SPEC-02 §3 scope, and the widened predicate
+ * makes that visible in an asymmetric way. `createDiagnosticBackup` writes
+ * `<target>` plus a `<target>.meta.json` sidecar; if the operator chose
+ * `userData` as the target directory, the sidecar lands in the erasure scope
+ * (`endsWith(".json")`) while the `.sqlite3` beside it does not (`isAppOwnedFile`
+ * is `startsWith("open3dcalc") || endsWith(".json")`, and a target named e.g.
+ * `diag.sqlite3` matches neither). So delete-all removes the sidecar and leaves
+ * the database it describes.
+ *
+ * Over-inclusive rather than a hole, deliberately: the erasure side is stronger
+ * than the retention side, which is the safe direction — a scope that is too
+ * wide destroys something it should have kept, a scope that is too narrow
+ * commits over a file full of the user's data. And the missing sidecar does not
+ * make the surviving `.sqlite3` look safe: `scanBackups`
+ * (`scripts/diagnostic-retention.mjs`) treats an unreadable sidecar as
+ * `redacted: false` and falls back to the DEFAULT 14-day deadline, ageing the
+ * file by mtime, so the unredacted-copy violation fires sooner, not later. It
+ * loses the operator's real `retentionDays` and `createdAt`, nothing more.
+ * Nothing pins the two halves together today: an operator who starts writing
+ * backups into `userData` gets a sidecar that disappears on the next
+ * delete-all with no warning. Fixing it means deciding whether the diagnostic
+ * surface belongs in §3 at all (a `userData`-resident operator artifact is a
+ * different question from an app-owned file), which is a contract call, not a
+ * predicate fix.
  */
 export function appdataFilesAdapter(userDataDir: string): StoreAdapterLike {
   const KEEP = new Set(["erasure-journal.json", "erasure-snapshots"]);

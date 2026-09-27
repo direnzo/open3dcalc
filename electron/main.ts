@@ -32,6 +32,7 @@ import { saveGated, loadGated } from "./persistGate.js";
 import { buildScanReport, summarizeReport } from "./legacyScan.js";
 import {
   PII_DOMAIN_TABLES,
+  PII_LEGACY_PLAINTEXT_TABLES,
   type PiiDomainTableCounts,
 } from "./piiDomainTables.js";
 import {
@@ -721,21 +722,33 @@ function runPrivacyScan(): ReturnType<typeof buildScanReport> {
     key: string;
     value: string;
   }>;
-  const countRows = (table: string): number =>
-    (
-      db.$client.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as {
-        c: number;
-      }
-    ).c;
   // Counts are read for every table in the canonical list — hardcoding the
-  // names here is exactly how `history_entries` went unreported.
+  // names here is exactly how `history_entries` went unreported. A table the
+  // profile predates counts as 0, the same "absent is already-empty" rule the
+  // erasure adapters follow: a scan that throws here would take startup down
+  // with it, and a scan report is metadata, not a gate.
+  const countRows = (table: string): number => {
+    try {
+      return (
+        db.$client.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as {
+          c: number;
+        }
+      ).c;
+    } catch {
+      return 0;
+    }
+  };
   const domainCounts = Object.fromEntries(
     PII_DOMAIN_TABLES.map((table) => [table, countRows(table)]),
   ) as PiiDomainTableCounts;
   const report = buildScanReport(rows, domainCounts);
   const summary = summarizeReport(report);
-  const domainPlaintext = Object.values(report.domainTables).reduce(
-    (total, count) => total + count,
+  // Only the tables where a row IS plaintext evidence. A `pii_stage` row is
+  // always a sealed envelope, so summing it in would make every in-flight
+  // migration warn "legacy plaintext PII detected" — the same class of lie as
+  // the `history_entries` omission, in the other direction.
+  const domainPlaintext = PII_LEGACY_PLAINTEXT_TABLES.reduce(
+    (total, table) => total + (report.domainTables[table] ?? 0),
     0,
   );
   if (report.legacyCount > 0 || domainPlaintext > 0) {

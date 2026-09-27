@@ -160,6 +160,38 @@ Three versions are in play and they are not interchangeable:
 sealed record changes shape, and a migration that bumps one must not silently bump
 the other.
 
+**`TODO(hermes)` — `S` is a constant, not a lookup, and a manifest `version` bump
+is a live landmine.** The trusted source for `S` is the per-key `version` in the
+SPEC-01 manifest, but `electron/cryptoCapability.ts:49-64` cannot reach the
+fixture (node16 ESM output will not execute a static JSON import) and mirrors the
+value as `PII_SCHEMA_VERSION = 1` instead. That mirror is safe only while nothing
+else reads those `version` fields. It must become a per-key lookup, and the order
+matters:
+
+1. land the per-key lookup first, while every PII at-rest entry is still at
+   version `1.0`/`1.1`/`1.2` — i.e. while the lookup returns what the constant
+   already returns, so no envelope is affected;
+2. only then allow a `version` bump on a PII at-rest entry.
+
+Bump a `sqlite_domain_tables` (or any PII `encrypted_at_rest`) `version` while
+`S` is still the constant, and on the day the lookup lands it silently re-labels
+`S` for that key: every passphrase-sealed envelope already on disk fails GCM
+authentication and becomes undecryptable. There is **no runtime signal** — no
+migration, no counter, no log line, nothing that says "this key's schema version
+moved"; the decryption path just throws `metadata_mismatch` on values that were
+written correctly, and the bytes are still on disk and still intact. The
+`safeStorage` branch is unaffected (it binds no AAD at all, §3.4), which is what
+makes this so easy to miss in a test profile: the only values at risk are the
+passphrase-sealed ones, which is exactly the fallback path.
+
+This is a separate tracked item from the manifest work that makes it reachable:
+`pii_stage`'s SPEC-01 declaration (§ Policy 1.5 → 1.6 in SPEC-04) is the first
+edit to add a new PII at-rest `version` field, and it is deliberately left at
+`1.0`. Pinned by `src/shared/lib/__tests__/piiStageDeclaration.test.ts` ("no PII
+at-rest entry has moved off schema version 1"), which fails on the bump and names
+this TODO. The `pii_stage` entry's own `purpose` carries the same warning, so it
+is visible from the manifest as well as from here.
+
 `v` selects a **version-specific reader**. The pre-remediation `1.1` envelope
 authenticated `canonicalJson({purpose, key})` with both halves read back out of the
 ciphertext, so its binding proved nothing about provenance, and it cannot be

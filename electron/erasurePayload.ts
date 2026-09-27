@@ -75,6 +75,16 @@ export function snapshotPayload(db: PayloadDb): string {
  * the payload captures (key, value) only, and a rollback genuinely does change
  * the row's write time. The sealed preimages in `pii_stage` keep their own
  * `created_at`, because there the column IS part of the captured row.
+ *
+ * KNOWN LIMITATION (pre-existing, recorded not fixed) — this restore is NOT
+ * wrapped in a transaction. A failure partway through leaves the database
+ * half-restored: some captured rows are back and the rest are not, and the
+ * caller cannot tell which from the return value. The resume rule (§2) means a
+ * second run converges — the merge upserts by key, so re-running finishes the
+ * job — but a crash between the two runs leaves the profile in an intermediate
+ * state that no single code path observes. The stage state machine
+ * (`electron/piiStage.ts`) wraps every one of its own writes for exactly this
+ * reason; this one predates it and is left alone here.
  */
 export function restoreSnapshotPayload(db: PayloadDb, payload: string): void {
   const parsed = JSON.parse(payload) as {

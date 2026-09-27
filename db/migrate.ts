@@ -43,6 +43,14 @@ export function backupDatabase(dbPath: string): string {
     const result = sqlite.pragma("wal_checkpoint(TRUNCATE)") as Array<{
       busy: number;
     }>;
+    // KNOWN LIMITATION (pre-existing, recorded not fixed) — the non-array
+    // branch fails OPEN. An unexpected pragma shape (a bare number, an object, a
+    // better-sqlite3 version that changes the return) silently becomes
+    // `busy = 0` and the copy below is written anyway, which is the one outcome
+    // this function exists to prevent: a backup that is missing every commit
+    // since the last checkpoint, presented as a safety net. It should fail
+    // CLOSED — an unrecognised result is an error, exactly like a non-zero
+    // `busy`. `result[0]?.busy ?? 0` has the same hole one level in.
     const busy = Array.isArray(result) ? (result[0]?.busy ?? 0) : 0;
     if (busy !== 0) {
       throw new Error(

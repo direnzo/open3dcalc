@@ -13,60 +13,93 @@
  * longer drift apart. Each table MUST also be declared `pii: true` on the
  * `sqlite_domain_tables` surface in `docs/privacy/SPEC-01-manifest-fixture.json`
  * (enforced by `piiDomainTables.test.ts` and
- * `privacyManifestCorrections.test.ts`).
+ * `privacyManifestCorrections.test.ts`, in BOTH directions: a manifest entry
+ * with no constant behind it fails just as a constant with no manifest entry
+ * does).
  *
  * Adapters MUST treat a missing table as already-empty (idempotent): profiles
  * created before a table was introduced do not have it.
  */
 
-export const PII_DOMAIN_TABLES = [
+/**
+ * The normalized PII-bearing USER CONTENT tables (db/schema/index.ts).
+ *
+ * Every row in one of these tables is plaintext at rest today, which is what
+ * makes a row count on this list a legacy-plaintext signal (ADR-002 §2.3) — see
+ * `PII_LEGACY_PLAINTEXT_TABLES` for the subset that claim is made about.
+ */
+export const PII_CONTENT_TABLES = [
   "customers",
   "quotes",
   "quote_items",
   "history_entries",
 ] as const;
 
-export type PiiDomainTable = (typeof PII_DOMAIN_TABLES)[number];
-
 /**
  * The `pii_stage` preimage table (Beta5 Wave 1, migration 0004).
  *
- * It is NOT a `PII_DOMAIN_TABLE` and must not be added to that list: the list
- * is pinned, in both directions, to the `sqlite_domain_tables` surface declared
- * in the SPEC-01 fixture, so a new entry there is a privacy-contract change (a
- * new declared PII surface means a `policy_version` bump, which stops consent
- * receipts issued under the old policy from validating — SPEC-04). `pii_stage`
- * holds no user data and mirrors nothing; declaring it is the job of the wave
- * that updates SPEC-01, not a side effect of creating a table.
+ * It is PII-bearing: a staged row carries the SEALED preimage of a user value
+ * mid-re-homing. What separates it from `PII_CONTENT_TABLES` is not whether it
+ * is PII but WHERE THE BYTES ARE — it is its own table rather than a `storage`
+ * row because the 10 s `persistence-bridge` sweep deletes every `storage` key
+ * the renderer does not have, and the startup pass decrypts a manifest-allowed
+ * one straight back into the renderer as plaintext. Both fates are pinned by
+ * `src/platform/desktop/overrides/__tests__/persistence-bridge.pii-stage.test.ts`
+ * and the reason is recorded in `db/migrations/0004_pii_stage.sql`.
  *
- * It is PII-bearing all the same: a staged row carries the preimage being
- * re-homed, sealed. So every path that must leave no PII behind — the SPEC-02
- * §3 purge, the §6 rescan post-condition, the §5 snapshot payload, the ADR-003
- * §2.2.2 backup redaction — iterates `PII_ERASURE_TABLES` below, which is the
- * domain tables PLUS this one. That is the list a new PII-bearing table joins,
- * and the `history_entries` lesson is why it is a constant rather than a
- * per-module array: one table was invisible to five sites at once.
- *
- * KNOWN GAP, tracked: not yet declared on the `sqlite_domain_tables` surface in
- * the SPEC-01 fixture.
+ * DECLARED on the `sqlite_domain_tables` surface of the SPEC-01 fixture as of
+ * `policy_version` 1.6 (it was a real PII surface the inventory did not name,
+ * which is the `history_entries` defect one layer out). The declaration cost a
+ * `policy_version` bump and therefore a re-consent, which was free only because
+ * nothing had shipped under 1.5 — see SPEC-04 §6.
  */
 export const PII_STAGE_TABLE = "pii_stage";
 
-/** Every SQLite table the erasure, snapshot and backup paths must handle. */
-export const PII_ERASURE_TABLES = [
-  ...PII_DOMAIN_TABLES,
+/**
+ * Every PII-bearing table declared on the `sqlite_domain_tables` surface.
+ *
+ * Pinned in BOTH directions to that surface, so it is the exact set and not a
+ * subset of what the manifest declares. Adding a table here is a
+ * privacy-contract change, not a refactor: declare it, and bump
+ * `policy_version` if it is new.
+ */
+export const PII_DOMAIN_TABLES = [
+  ...PII_CONTENT_TABLES,
   PII_STAGE_TABLE,
 ] as const;
+
+export type PiiDomainTable = (typeof PII_DOMAIN_TABLES)[number];
+
+/**
+ * Every SQLite table the erasure, snapshot and backup paths must handle.
+ *
+ * The same set as the declared PII domain tables — this alias is kept because
+ * SPEC-02 §3/§5/§6 and ADR-003 §2.2.2 all speak in terms of ERASURE coverage,
+ * which is a different question from what the startup scan counts, and naming
+ * the two separately is what stops one answer being used for the other.
+ */
+export const PII_ERASURE_TABLES = PII_DOMAIN_TABLES;
 
 export type PiiErasureTable = (typeof PII_ERASURE_TABLES)[number];
 
 /**
- * Row counts for every PII domain table (the ADR-002 §2.3 scan report shape).
- * Derived from the constant, so adding a table is a compile error at every
- * site that builds or consumes this shape — no site can silently omit one.
+ * The subset where ANY row is legacy-plaintext residue (ADR-002 §2.3) — the
+ * tables the startup scan and its "profile is not clean" gate are allowed to
+ * count.
  *
- * The report covers the DOMAIN tables only: a `pii_stage` row is always a
- * sealed envelope, never legacy plaintext, which is what this report counts.
- * It is still erased (see `PII_ERASURE_TABLES`).
+ * `pii_stage` is deliberately excluded. A stage row is always a sealed
+ * envelope, never plaintext, so counting it would report every in-flight
+ * migration as "legacy plaintext PII detected" — a false alarm that trains
+ * operators to ignore the one log line that matters. The table is still erased,
+ * still snapshotted and still redacted out of diagnostic backups; it is only
+ * not evidence of a plaintext at-rest defect.
+ */
+export const PII_LEGACY_PLAINTEXT_TABLES = PII_CONTENT_TABLES;
+
+/**
+ * Row counts for every declared PII domain table (the ADR-002 §2.3 scan report
+ * shape). Derived from the constant, so adding a table is a compile error at
+ * every site that builds or consumes this shape — no site can silently omit
+ * one.
  */
 export type PiiDomainTableCounts = Record<PiiDomainTable, number>;

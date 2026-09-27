@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0",
-  "policy_version": "1.5",
+  "policy_version": "1.6",
   "keys": [
     {
       "key": "open3dcalc_consent_v1",
@@ -226,6 +226,25 @@
         "max_days": 0
       },
       "purpose": "Normalized saved calculation results in the desktop database; PII-bearing because each row carries a free-text name plus resultJson (the whole CalculationResult) and snapshotJson (every calculator input).",
+      "legal_basis": "consent",
+      "owner": "demeter",
+      "version": "1.0"
+    },
+    {
+      "key": "pii_stage",
+      "surface": "sqlite_domain_tables",
+      "platforms": ["electron"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "diagnostic_only",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "session_only",
+        "max_days": 1
+      },
+      "purpose": "Staging table for re-homing a PII value between storage layouts (Beta5 Wave 1, migration 0004_pii_stage.sql): one row is the SEALED (enc1:…) preimage of one value, beside the AAD components it is bound to (privacy_epoch, schema_version, envelope_version) and the state/generation of the transaction that owns it. PII-bearing because the preimage IS the user's value, sealed — it is never plaintext. A dedicated table rather than a `storage` row because the 10 s persistence-bridge sweep deletes every storage key the renderer does not have, and the startup pass decrypts a manifest-allowed one straight back into the renderer as plaintext (SPEC-02 §3.1). Retention: the row exists only for the duration of the re-homing transaction — the state machine discards it at S6 — and there is NO TTL sweeper, so the SPEC-02 §3 row 12 purge is the only backstop; the declared max_days is the intended ceiling, not an enforced timer (same disclosure as appdata_temp_staging). Export: never through any user-facing path, since SPEC-03 envelopes are built from the renderer stores, but `db:export` and an unredacted diagnostic backup copy the raw file, so this declares the REQUIRED policy rather than describing the code. DO NOT BUMP `version` ON THIS ENTRY (or on any PII at-rest entry) UNTIL THE LANDMINE IS CLEARED: the AAD's S is a hardcoded constant, PII_SCHEMA_VERSION = 1 in electron/cryptoCapability.ts, and the day it becomes a per-key manifest lookup a `version` bump re-labels every existing envelope's S and strands it. See ADR-001 §3.3 TODO(hermes) and SPEC-04 §6.",
       "legal_basis": "consent",
       "owner": "demeter",
       "version": "1.0"

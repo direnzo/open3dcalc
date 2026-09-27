@@ -291,8 +291,11 @@ describe("SPEC-01: the appdata PII-bearing surfaces are declared truthfully", ()
 // ---------------------------------------------------------------------------
 
 describe("SPEC-01: policy_version reflects the Beta5 corrections", () => {
-  it("is 1.5, so receipts issued under 1.4 no longer validate", () => {
-    expect(doc.policy_version).toBe("1.5");
+  it("is 1.6, so receipts issued under 1.5 no longer validate", () => {
+    // 1.4 → 1.5 for the corrections pinned in this file. 1.5 → 1.6 declares
+    // `pii_stage` as a PII sqlite domain table; see piiStageDeclaration.test.ts
+    // for the re-consent side of that bump.
+    expect(doc.policy_version).toBe("1.6");
   });
 });
 

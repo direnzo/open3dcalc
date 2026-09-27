@@ -123,6 +123,36 @@ regression. What changed in the policy the user is consenting to:
   `webSnapshotStore().write()` through `guardedStorage`, so the S1 gate must keep
   recognizing it.
 
+**Policy 1.5 → 1.6 (declaring `pii_stage`).** `pii_stage` is now a declared PII
+`sqlite_domain_tables` surface. Receipts issued under 1.5 evaluate as
+`policy_mismatch` and the user is re-consented for the delta. What changed in the
+policy the user is consenting to:
+
+- `pii_stage` (Beta5 Wave 1, migration `0004_pii_stage.sql`) is declared. A
+  staged row carries the sealed preimage of a user value mid-re-homing, so the
+  table was PII-bearing from the moment it was created and the inventory simply
+  did not name it — the `history_entries` omission one layer out. Its policy:
+  `encrypted_at_rest`, `sync: never`, `export: diagnostic_only`,
+  `erasure: erase_on_delete_all`, `legal_basis: consent` (so a withdrawal erases
+  it), retention `session_only` / 1 day — the intended ceiling, not an enforced
+  timer, since the state machine discards the row and there is no TTL sweeper.
+
+**Why this re-consent is free, and why the next one will not be.** Nothing had
+shipped when 1.6 was cut, so no consent receipt issued under 1.5 exists in the
+wild outside a developer's own profile: no real user is interrupted, and the
+delta is a declaration rather than a change in what the app collects. That
+exemption is a property of the release state, not of the process — it is
+recorded here so a later reader does not mistake this bump for a routine one. A
+declared PII surface added _after_ a release costs every user holding a live
+receipt one interrupted re-consent and, until they return, gates PII features
+that depend on consent. Decide the `policy_version` bump when the surface is
+designed, not when the omission is noticed.
+
+- The `version` field of the new `pii_stage` entry is `1.0` and MUST NOT be
+  bumped: the AAD's `S` is a hardcoded constant today, and the day it becomes a
+  per-key manifest lookup a `version` bump re-labels every existing envelope's
+  `S` and strands it. See ADR-001 §3.3 `TODO(hermes)`.
+
 ## 7. What D1.0 does NOT deliver
 
 D1.0 is the normative text. As of D1.0, consent is a bare boolean flag

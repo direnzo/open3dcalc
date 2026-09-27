@@ -161,7 +161,14 @@ sealed record changes shape, and a migration that bumps one must not silently bu
 the other.
 
 **`TODO(hermes)` — `S` is a constant, not a lookup, and a manifest `version` bump
-is a live landmine.** The trusted source for `S` is the per-key `version` in the
+is a live landmine.** There are now **two** mirrors of the constant, not one:
+`electron/cryptoCapability.ts` (main process) and
+`src/shared/lib/crypto/piiSchemaVersion.ts` (the browser PII vault). They cannot
+import each other — the main process cannot reach the JSON fixture, and the
+shared module is not on the electron import allowlist — so the duplication is
+pinned by test instead (`piiVaultDeclaration.test.ts` reads the electron source
+and asserts the two values are equal, in both directions). The lookup that
+replaces them therefore has to remove **both** pins in the same commit. The trusted source for `S` is the per-key `version` in the
 SPEC-01 manifest, but `electron/cryptoCapability.ts:49-64` cannot reach the
 fixture (node16 ESM output will not execute a static JSON import) and mirrors the
 value as `PII_SCHEMA_VERSION = 1` instead. That mirror is safe only while nothing

@@ -135,14 +135,15 @@ describe("manifestGate (W0 SPEC-01 v1.4 ui_preference keys)", () => {
     expect(decision.entry?.legal_basis).toBe("not_personal_data");
   });
 
-  it("W0: ships policy_version 1.6", () => {
-    // 1.4 → 1.5 by the Beta5 privacy corrections: several entries were
+  it("W0: ships policy_version 1.7", () => {
+    // 1.4 -> 1.5 by the Beta5 privacy corrections: several entries were
     // reclassified (open3dcalc_migration_done_v2 and open3dcalc_dashboard_v1
-    // flipped `pii`). 1.5 → 1.6 declares `pii_stage` as a PII sqlite domain
-    // table — a real PII surface the inventory did not name. Either way a
-    // receipt issued under the previous version must no longer validate.
-    expect((manifestFixture as ManifestDocument).policy_version).toBe("1.6");
-    expect(MANIFEST_POLICY_VERSION).toBe("1.6");
+    // flipped `pii`). 1.5 -> 1.6 declares `pii_stage` as a PII sqlite domain
+    // table, a real PII surface the inventory did not name. 1.6 -> 1.7
+    // declares `open3dcalc_pii_vault`, the encrypted browser PII store. Either
+    // way a receipt issued under the previous version must no longer validate.
+    expect((manifestFixture as ManifestDocument).policy_version).toBe("1.7");
+    expect(MANIFEST_POLICY_VERSION).toBe("1.7");
   });
 
   it("W0: still denies an unregistered key in dev (fail-closed)", () => {

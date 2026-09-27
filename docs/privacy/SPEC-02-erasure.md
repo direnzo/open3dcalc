@@ -168,6 +168,19 @@ warn "legacy plaintext PII detected". That is the same class of lie as the
 by `piiDomainTables.test.ts` because it is a deletion: summing the full report
 again would compile and pass.
 
+**Row 5 now has a real target.** The only app database on this surface is
+`open3dcalc_pii_vault` (SPEC-01 `policy_version` 1.7, `pii: true`,
+`erasure: erase_on_delete_all`): the sealed browser store the three PII keys
+migrate onto off plaintext `localStorage`. `indexeddbAdapter().purge()` in
+`src/shared/lib/erasureSaga/rendererSweep.ts` enumerates `indexedDB.databases()`
+and deletes each one, so the vault is covered wholesale by construction rather
+than by an enumerated key list. Note the deliberate asymmetry with row 5's
+`rescan()`: it returns `[]` unconditionally, so the §6 post-condition reports
+"clean" for IndexedDB on the strength of the purge, not of a rescan. That was
+already true before this task, but the vault makes it load-bearing: a purge that
+fails partway still reports clean, and the sealed records are the user's
+customers, quotes and history.
+
 ## 4. Journal format (per-store, resumable)
 
 The journal is a small file (or SQLite table on desktop) under `userData` (desktop) or

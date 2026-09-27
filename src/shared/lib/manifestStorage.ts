@@ -23,6 +23,11 @@ import {
   type StateStorage,
 } from "zustand/middleware";
 import { checkKey } from "./manifestGate";
+import {
+  resolvePiiStoreRefusal,
+  type PiiStoreDenialReason,
+  type PiiStoreEnvironment,
+} from "./crypto/piiStoreCapability";
 
 /**
  * Ephemeral demo-data mode (onboarding Fase 0).
@@ -45,6 +50,68 @@ export function setDemoPersistenceSuppressed(value: boolean): void {
 /** True while a demo session owns the stores (writes are no-ops). */
 export function isDemoPersistenceSuppressed(): boolean {
   return demoPersistenceSuppressed;
+}
+
+/* ------------------------------------------------------------------ */
+/*  PII vault gate — the same choke point, second predicate.           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Capability snapshot for the browser PII vault, or null if none was ever
+ * installed. `null` is a DENIAL, not a default: the vault has to be handed an
+ * environment explicitly, so a caller that forgets cannot inherit "allowed"
+ * from a previous session.
+ */
+let piiStoreEnvironment: PiiStoreEnvironment | null = null;
+
+/**
+ * The user's live decision. Deliberately NOT part of the snapshot: a consent
+ * withdrawal must take effect at the next call, not at the next snapshot.
+ */
+let piiPersistenceDeclined = false;
+
+/** Install (or clear, with null) the vault's capability snapshot. */
+export function setPiiStoreEnvironment(
+  environment: PiiStoreEnvironment | null,
+): void {
+  piiStoreEnvironment = environment;
+}
+
+/** Record that the user declined PII persistence (consent withdrawn/opt-out). */
+export function setPiiPersistenceDeclined(value: boolean): void {
+  piiPersistenceDeclined = value;
+}
+
+/** True while the user has declined PII persistence. */
+export function isPiiPersistenceDeclined(): boolean {
+  return piiPersistenceDeclined;
+}
+
+/**
+ * Why the PII vault must refuse, or null when it may proceed.
+ *
+ * This is the ONE predicate the vault consults, and it composes the
+ * demo-session suppression above rather than sitting beside it. Two
+ * predicates would be two choke points: a demo session would then suppress
+ * localStorage writes while still sealing PII into IndexedDB, and a demo
+ * session is defined as holding nothing at all (LGPD ephemeral data is not
+ * personal data being processed). `locked` is passed in by the caller because
+ * the held key is per-store state, not a module-level flag.
+ */
+export function piiStoreRefusalReason(
+  locked: boolean,
+): PiiStoreDenialReason | null {
+  return resolvePiiStoreRefusal({
+    demoSuppressed: demoPersistenceSuppressed,
+    environment: piiStoreEnvironment,
+    declined: piiPersistenceDeclined,
+    locked,
+  });
+}
+
+/** True when the vault may read or write PII right now. */
+export function isPiiStoreAllowed(locked: boolean): boolean {
+  return piiStoreRefusalReason(locked) === null;
 }
 
 function rawStorage(): StateStorage {

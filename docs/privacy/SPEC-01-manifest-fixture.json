@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0",
-  "policy_version": "1.6",
+  "policy_version": "1.7",
   "keys": [
     {
       "key": "open3dcalc_consent_v1",
@@ -131,6 +131,25 @@
         "max_days": 0
       },
       "purpose": "Customer directory (name, company, email, phone, address, notes) used to issue quotes.",
+      "legal_basis": "consent",
+      "owner": "hermes",
+      "version": "1.0"
+    },
+    {
+      "key": "open3dcalc_pii_vault",
+      "surface": "indexeddb",
+      "platforms": ["web", "pwa"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "never",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Encrypted browser store for the three PII keys (open3dcalc_customers_v1, open3dcalc_quotes_v1, open3dcalc_history_v2) as they are migrated off plaintext localStorage. ONE IndexedDB database holding one record per logical storage key; each record is a Wave 1 v2 AES-256-GCM envelope (PBKDF2-SHA256 @310,000) whose AAD binds the key name, purpose, schemaVersion and envelopeFormatVersion, sealed under a passphrase-derived key held only in memory and non-extractable. There is no plaintext fallback: the gate in manifestStorage refuses a read or a write when the profile is locked, when Web Crypto or IndexedDB is absent, in an insecure context, or when the user has declined. NEVER SYNCED AND NEVER EXPORTED: dataSync.ts reads a fixed list of localStorage key literals and never enumerates a store, so this surface is unreachable from the sync/export path by construction (pinned by piiVaultDeclaration.test.ts). The records hold the same customers/quotes/history the legacy localStorage keys held, so retention is user_controlled with no ceiling - and NO TTL SWEEPER exists, so nothing expires them on a timer. Without the passphrase the records are unreadable, which is a property of the key and NOT retention; the bytes persist until the user erases or deletes the data. Covered by the SPEC-02 IndexedDB sweep (indexeddbAdapter().purge() deletes the database wholesale).",
       "legal_basis": "consent",
       "owner": "hermes",
       "version": "1.0"

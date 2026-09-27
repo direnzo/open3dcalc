@@ -137,12 +137,41 @@ policy the user is consenting to:
   it), retention `session_only` / 1 day — the intended ceiling, not an enforced
   timer, since the state machine discards the row and there is no TTL sweeper.
 
+**Policy 1.6 -> 1.7 (declaring the browser PII vault).** `open3dcalc_pii_vault`
+is now a declared PII `indexeddb` surface. Receipts issued under 1.6 evaluate as
+`policy_mismatch` and the user is re-consented for the delta. What changed in the
+policy the user is consenting to:
+
+- `open3dcalc_pii_vault` (Beta5 Wave 2) is declared. It is the encrypted browser
+  store the three PII keys (`open3dcalc_customers_v1`, `open3dcalc_quotes_v1`,
+  `open3dcalc_history_v2`) are migrated onto as they come off plaintext
+  `localStorage`. Until this declaration the largest PII store in the web build
+  was undeclared: the same class of defect as `pii_stage`, one layer out.
+- Its policy is `encrypted_at_rest` (AES-256-GCM under a passphrase-derived,
+  non-extractable, memory-only key), `sync: never`, `export: never`,
+  `erasure: erase_on_delete_all`, `legal_basis: consent` (so a withdrawal erases
+  it), retention `user_controlled` with no ceiling and **no TTL sweeper**.
+- The vault is unreachable from the sync/export path by construction:
+  `dataSync.ts` reads a fixed list of `localStorage` key literals and never
+  enumerates a store, so a new surface is excluded structurally. Pinned by
+  `src/shared/lib/__tests__/piiVaultDeclaration.test.ts`, which asserts both the
+  behaviour and the shape, because a structural guarantee is exactly what gets
+  broken by one careless enumeration.
+- The three legacy `localStorage` keys keep their existing declarations. This
+  change declares the destination; migrating the stores onto it, and then
+  narrowing those three entries to `sync: never` for the web build, is the
+  follow-on, and it is a second re-consent.
+
 **Why this re-consent is free, and why the next one will not be.** Nothing had
 shipped when 1.6 was cut, so no consent receipt issued under 1.5 exists in the
 wild outside a developer's own profile: no real user is interrupted, and the
 delta is a declaration rather than a change in what the app collects. That
 exemption is a property of the release state, not of the process — it is
-recorded here so a later reader does not mistake this bump for a routine one. A
+recorded here so a later reader does not mistake this bump for a routine one.
+**The same exemption covers 1.7** (the PII vault declaration) for the same
+reason: still nothing shipped, so no receipt issued under 1.6 exists outside a
+developer's own profile. The exemption is granted once, here; the first bump
+after a release does not get it. A
 declared PII surface added _after_ a release costs every user holding a live
 receipt one interrupted re-consent and, until they return, gates PII features
 that depend on consent. Decide the `policy_version` bump when the surface is

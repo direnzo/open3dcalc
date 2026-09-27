@@ -61,19 +61,96 @@ The saga MUST iterate over **every** surface in SPEC-01, per platform:
 | 9   | logs                       | electron | truncate/delete log files (they must be PII-scrubbed anyway, but erasure removes them)                                              |
 | 10  | temp/staging               | all      | purge staging directories (import/export staging, temp files)                                                                       |
 | 11  | snapshots                  | electron | destroy prior erasure snapshots (see §5); the current saga's snapshot is handled by commit/rollback                                 |
+| 12  | `pii_stage` preimage table | electron | `DELETE FROM pii_stage` (§3.1) — an in-flight migration preimage is the user's data mid-re-homing                                   |
+
+### 3.1 The `pii_stage` preimage table
+
+`pii_stage` (migration `0004_pii_stage.sql`) holds the **sealed preimage** of a
+value being re-homed from a plaintext source to its encrypted destination: an
+ADR-001 envelope (`enc1:…`), never plaintext, beside the AAD components it is
+bound to (`privacy_epoch`, `schema_version`, `envelope_version`) and the
+`state`/`generation` of the transaction that owns it.
+
+It is a dedicated table, not a row in `storage`, and the reason is mechanical
+rather than stylistic:
+
+- `persistence-bridge.deleteStaleKeys()` runs every `AUTO_SAVE_INTERVAL_MS`
+  (10 s) and **deletes** every `storage` key absent from renderer
+  `localStorage`, so a stage row parked there is removed within one poll — not
+  lost in a race;
+- `loadFromDatabase()` materializes every manifest-**allowed** `storage` row
+  into renderer `localStorage`, so a stage row parked under an allowed key is
+  decrypted straight back into the renderer as plaintext — the exact mirror this
+  work removes.
+
+Both halves are pinned by
+`src/platform/desktop/overrides/__tests__/persistence-bridge.pii-stage.test.ts`.
+A separate table is invisible to `db:list-keys` and to that sweep, so a staged
+preimage lives exactly as long as its own state machine says it should
+(S2 stage write → S4 destination write → S6 stage removal → S8 per-source
+deletes, each in its own transaction — `electron/piiStage.ts`).
+
+**In the erasure scope**, therefore:
+
+- §3 row 12 / the `sqlite_domain_tables` purge: every `DELETE FROM pii_stage`;
+- §6 rescan: a surviving stage row is named (`pii_stage: N rows`), so a purge
+  that could not remove it blocks the commit instead of hiding it;
+- §5 snapshot: the payload captures and the rollback restores stage rows — a
+  rollback that omitted them would be unrecoverable for exactly the transaction
+  that is mid-flight. The restore is a **merge** (upsert by key), so it restores
+  what the saga deleted without destroying what was written after the snapshot;
+- ADR-003 §2.2.2: a redacted diagnostic backup strips the table, and a strip
+  that is _refused_ (locked database, read-only file, corrupt page, refusing
+  trigger) is reported in `stripFailures` / the sidecar's `strip_failures` rather
+  than counted as a clean redaction. A table the profile predates is not a
+  refusal and is not reported.
+
+`PII_ERASURE_TABLES` in `electron/piiDomainTables.ts` is the single constant
+every one of those sites iterates (the four PII domain tables plus this one) —
+the direct consequence of the `history_entries` omission described below.
+
+**Exempt from `db:import` validation.** `db/database.ts requiredTables()` derives
+the mandatory table list from the migration files by regex, so adding any table
+makes it a precondition for importing a database. `pii_stage` is exempted
+(`IMPORT_EXEMPT_TABLES`), because:
+
+1. the check cannot prevent a bad swap — `db:import` validates a copy, swaps it
+   in, and then calls `initDatabase()`, which re-runs the migration that creates
+   this table;
+2. rejecting it would remove recoverability exactly where it is needed, since the
+   files lacking `pii_stage` are the pre-remediation backups of the users this
+   work protects;
+3. `requiredTables()` is a legitimacy test on the user's **data** schema, not a
+   "is this the newest migration" test — `pii_stage` holds no user data and
+   mirrors nothing.
+
+The exemption is a named constant (not an inferred rule) and is pinned in
+`db/__tests__/pii-stage-migration.test.ts`: a 0000-0003 database is accepted and
+forward-migrated, and a database missing any real table is still refused.
 
 **Snapshot, WAL, and staging are INSIDE the erasure scope.** A delete-all that leaves
 `-wal` files, staging files, or old snapshots containing PII has not completed. The
 post-condition rescan (§6) checks all of them.
 
 **The PII domain table list has exactly one source of truth:**
-`PII_DOMAIN_TABLES` in `electron/piiDomainTables.ts`. The purge adapter (§3 row 2), the
-§6 rescan post-condition, the §5 snapshot payload, the ADR-002 §2.3 scan report, and the
-ADR-003 §2.2.2 backup redaction all iterate that one list. `history_entries` was missing
-from every one of those sites, which made the §6 rescan report "clean" while its
-PII-bearing rows survived — the list must never be duplicated per module. Adding a
-PII-bearing normalized table requires adding it there and declaring it `pii: true` on the
+`PII_ERASURE_TABLES` in `electron/piiDomainTables.ts` — the PII domain tables
+(`customers`, `quotes`, `quote_items`, `history_entries`) plus the `pii_stage`
+preimage table (§3.1). The purge adapter (§3 row 2), the §6 rescan
+post-condition, the §5 snapshot payload, and the ADR-003 §2.2.2 backup redaction
+all iterate that one list. `history_entries` was missing from every one of those
+sites, which made the §6 rescan report "clean" while its PII-bearing rows
+survived — the list must never be duplicated per module. Adding a PII-bearing
+table requires adding it there, and declaring it `pii: true` on the
 `sqlite_domain_tables` surface in SPEC-01.
+
+**Known gap (tracked):** `pii_stage` is **not** yet declared on the
+`sqlite_domain_tables` surface in the SPEC-01 fixture. It is deliberately not in
+`PII_DOMAIN_TABLES` either — that list is pinned, in both directions, to the
+declared SPEC-01 surface, so adding an entry there is a privacy-contract change
+(a new declared PII surface means a `policy_version` bump, and consent receipts
+issued under the old policy stop validating per SPEC-04). Erasure, snapshot and
+backup coverage is complete; the manifest declaration is owed by the wave that
+updates SPEC-01.
 
 ## 4. Journal format (per-store, resumable)
 

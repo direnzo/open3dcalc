@@ -23,6 +23,7 @@ const MIGRATION_FILES = [
   "0001_add_theme.sql",
   "0002_products.sql",
   "0003_filament_tare.sql",
+  "0004_pii_stage.sql",
 ];
 
 let tmpFile: string;

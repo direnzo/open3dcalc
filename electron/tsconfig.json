@@ -26,6 +26,7 @@
     "../src/shared/lib/crypto/**/*.ts",
     "../db/**/*.ts",
     "persistGate.ts",
+    "piiStage.ts",
     "legacyScan.ts",
     "quarantine.ts",
     "manifestSource.ts",

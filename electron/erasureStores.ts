@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { StoreAdapterLike } from "../src/shared/lib/erasureSaga/types.js";
 import type { MinimalStorageDb } from "./persistGate.js";
-import { PII_DOMAIN_TABLES } from "./piiDomainTables.js";
+import { PII_ERASURE_TABLES } from "./piiDomainTables.js";
 
 export interface RendererStoreReport {
   purged: number;
@@ -50,7 +50,20 @@ export function rendererReportAdapter(
   };
 }
 
-/** §3 row 2: manifest-PII domain tables + their child rows. */
+/**
+ * §3 row 2: manifest-PII domain tables + the `pii_stage` preimage table, and
+ * their child rows.
+ *
+ * Iterates `PII_ERASURE_TABLES` — the domain tables PLUS `pii_stage`, which
+ * holds a staged preimage and is therefore PII-bearing even though it mirrors
+ * no user data. It used to iterate `PII_DOMAIN_TABLES`, which is how a table
+ * becomes a silent-residue class: the purge did not touch it and the §6 rescan
+ * could not name what survived.
+ *
+ * The deletes are deliberately NOT wrapped in one transaction: a table absent
+ * from an older profile must not abort the purge of the tables that are there.
+ * Per-table isolation is the idempotence the resume rule depends on.
+ */
 export function sqliteDomainTablesAdapter(
   db: MinimalStorageDb,
 ): StoreAdapterLike {
@@ -58,22 +71,30 @@ export function sqliteDomainTablesAdapter(
     store: "sqlite_domain_tables",
     async purge() {
       let deleted = 0;
-      for (const table of PII_DOMAIN_TABLES) {
+      for (const table of PII_ERASURE_TABLES) {
         try {
           deleted += (
             db.prepare(`DELETE FROM ${table}`).run() as { changes: number }
           ).changes;
         } catch {
           // Table absent in older databases — already empty (idempotent).
+          // NOTE: this catch also swallows a genuine failure (locked or
+          // read-only database). The §6 rescan below is what catches that: a
+          // table whose rows are still there is named, and the saga does not
+          // commit over it. So the swallow is safe here and ONLY because the
+          // rescan is not a best-effort.
         }
       }
       // §3: VACUUM so freed pages are not recoverable from the file.
+      // Deliberately outside any transaction — VACUUM cannot run inside one,
+      // and it rewrites the whole file. The stage state machine
+      // (`electron/piiStage.ts`) never issues it for the same reason.
       db.prepare("VACUUM").run();
       return deleted;
     },
     async rescan() {
       const remaining: string[] = [];
-      for (const table of PII_DOMAIN_TABLES) {
+      for (const table of PII_ERASURE_TABLES) {
         try {
           const count = (
             db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as {
@@ -138,14 +159,21 @@ export function sqliteWalShmAdapter(
 /**
  * §3 row 8: app-owned files under userData — never the journal or the DB.
  *
- * NOTE on a pre-existing asymmetry (recorded, NOT changed here): `purge()`
- * deletes every top-level `open3dcalc*` file with no exclusion, while
- * `rescan()` skips anything starting with `open3dcalc-backup`. purge is
- * therefore strictly stronger than the post-condition for that prefix, so it
- * cannot cause residue — but the converse is a latent gap: if purge ever fails
- * to remove an `open3dcalc-backup*` file (permissions, EBUSY), the rescan will
- * not report it and the saga still commits. Fixing it means narrowing rescan's
- * exclusion, which changes erasure behaviour and is deferred to a later wave.
+ * `purge()` and `rescan()` decide "is this file in the erasure scope" through
+ * ONE predicate (`isAppOwnedFile`) and ONE keep-list. They used to carry the
+ * decision separately, and they disagreed: `rescan()` skipped any
+ * `open3dcalc-backup*` file that `purge()` deleted. That asymmetry was recorded
+ * as harmless — purge is strictly stronger, so it cannot LEAVE residue — and it
+ * is harmless only in the direction nobody looks at. The failure that matters is
+ * a purge that does NOT delete: the file survives, `rescan` does not name it,
+ * the §6 post-condition passes, and the saga commits over a file full of the
+ * user's data. So the prefix exclusion is gone: `rescan` now reports every file
+ * `purge` targets, and the two cannot drift apart again.
+ *
+ * The keep-list is the saga's own state (`erasure-journal.json`,
+ * `erasure-snapshots*`), which both sides skip — a journal that deletes itself
+ * is a journal that cannot be resumed, and the snapshot is destroyed by the
+ * commit/rollback step, not by a store row.
  *
  * Related: `db/database.ts` resolves the DB to `<userData>/open3dcalc.db`, so
  * `dirname(dbPath) === userData` and the pre-import copies
@@ -154,22 +182,24 @@ export function sqliteWalShmAdapter(
  */
 export function appdataFilesAdapter(userDataDir: string): StoreAdapterLike {
   const KEEP = new Set(["erasure-journal.json", "erasure-snapshots"]);
+  const isAppOwnedFile = (entry: string): boolean =>
+    entry.startsWith("open3dcalc") || entry.endsWith(".json");
+  const isInScope = (entry: string): boolean =>
+    !KEEP.has(entry) &&
+    !entry.startsWith("erasure-snapshots") &&
+    fs.statSync(path.join(userDataDir, entry)).isFile() &&
+    isAppOwnedFile(entry);
   return {
     store: "appdata_files",
     async purge() {
       let deleted = 0;
       if (!fs.existsSync(userDataDir)) return 0;
       for (const entry of fs.readdirSync(userDataDir)) {
-        const full = path.join(userDataDir, entry);
-        if (KEEP.has(entry) || entry.startsWith("erasure-snapshots")) continue;
         // Only top-level app files we own by name pattern — never the
         // SQLite database itself (covered by the sqlite stores) and never
         // directories managed by Electron (Cache/GPUCache...).
-        if (
-          fs.statSync(full).isFile() &&
-          (entry.startsWith("open3dcalc") || entry.endsWith(".json"))
-        ) {
-          fs.rmSync(full, { force: true });
+        if (isInScope(entry)) {
+          fs.rmSync(path.join(userDataDir, entry), { force: true });
           deleted++;
         }
       }
@@ -179,14 +209,7 @@ export function appdataFilesAdapter(userDataDir: string): StoreAdapterLike {
       const remaining: string[] = [];
       if (!fs.existsSync(userDataDir)) return remaining;
       for (const entry of fs.readdirSync(userDataDir)) {
-        const full = path.join(userDataDir, entry);
-        if (
-          fs.statSync(full).isFile() &&
-          entry.startsWith("open3dcalc") &&
-          !entry.startsWith("open3dcalc-backup")
-        ) {
-          remaining.push(`appdata: ${entry}`);
-        }
+        if (isInScope(entry)) remaining.push(`appdata: ${entry}`);
       }
       return remaining;
     },

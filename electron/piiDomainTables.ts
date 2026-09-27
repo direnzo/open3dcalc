@@ -29,8 +29,44 @@ export const PII_DOMAIN_TABLES = [
 export type PiiDomainTable = (typeof PII_DOMAIN_TABLES)[number];
 
 /**
+ * The `pii_stage` preimage table (Beta5 Wave 1, migration 0004).
+ *
+ * It is NOT a `PII_DOMAIN_TABLE` and must not be added to that list: the list
+ * is pinned, in both directions, to the `sqlite_domain_tables` surface declared
+ * in the SPEC-01 fixture, so a new entry there is a privacy-contract change (a
+ * new declared PII surface means a `policy_version` bump, which stops consent
+ * receipts issued under the old policy from validating — SPEC-04). `pii_stage`
+ * holds no user data and mirrors nothing; declaring it is the job of the wave
+ * that updates SPEC-01, not a side effect of creating a table.
+ *
+ * It is PII-bearing all the same: a staged row carries the preimage being
+ * re-homed, sealed. So every path that must leave no PII behind — the SPEC-02
+ * §3 purge, the §6 rescan post-condition, the §5 snapshot payload, the ADR-003
+ * §2.2.2 backup redaction — iterates `PII_ERASURE_TABLES` below, which is the
+ * domain tables PLUS this one. That is the list a new PII-bearing table joins,
+ * and the `history_entries` lesson is why it is a constant rather than a
+ * per-module array: one table was invisible to five sites at once.
+ *
+ * KNOWN GAP, tracked: not yet declared on the `sqlite_domain_tables` surface in
+ * the SPEC-01 fixture.
+ */
+export const PII_STAGE_TABLE = "pii_stage";
+
+/** Every SQLite table the erasure, snapshot and backup paths must handle. */
+export const PII_ERASURE_TABLES = [
+  ...PII_DOMAIN_TABLES,
+  PII_STAGE_TABLE,
+] as const;
+
+export type PiiErasureTable = (typeof PII_ERASURE_TABLES)[number];
+
+/**
  * Row counts for every PII domain table (the ADR-002 §2.3 scan report shape).
  * Derived from the constant, so adding a table is a compile error at every
  * site that builds or consumes this shape — no site can silently omit one.
+ *
+ * The report covers the DOMAIN tables only: a `pii_stage` row is always a
+ * sealed envelope, never legacy plaintext, which is what this report counts.
+ * It is still erased (see `PII_ERASURE_TABLES`).
  */
 export type PiiDomainTableCounts = Record<PiiDomainTable, number>;

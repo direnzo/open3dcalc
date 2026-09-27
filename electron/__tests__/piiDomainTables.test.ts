@@ -425,16 +425,24 @@ describe("appdataFilesAdapter covers pre-import database copies", () => {
     expect(await adapter.rescan()).toEqual([]);
   });
 
-  it("documents the purge/rescan asymmetry for the open3dcalc-backup prefix", async () => {
-    // purge() has NO open3dcalc-backup exclusion; rescan() DOES. Recorded as a
-    // latent gap (purge is stricter, so no residue today) — see the adapter
-    // doc comment. This test pins the current behaviour so a change is visible.
+  it("REPORTS a surviving open3dcalc-backup file — the rescan/purge asymmetry is closed", async () => {
+    // Previously recorded as a latent gap: `purge()` deleted every
+    // `open3dcalc-backup*` file while `rescan()` skipped the prefix, so a purge
+    // that FAILED on such a file left residue the §6 post-condition could not
+    // name — and the saga committed over it. Both sides now share one
+    // predicate, so this file is reported the moment it exists, whatever the
+    // reason it survived.
     const backup = join(userData, "open3dcalc-backup-1700000000000");
     writeFileSync(backup, MARKER);
 
     const adapter = appdataFilesAdapter(userData);
+    // Reported BEFORE the purge, which is the whole point: the report is what a
+    // failed purge leaves behind.
+    expect(await adapter.rescan()).toEqual([
+      "appdata: open3dcalc-backup-1700000000000",
+    ]);
     await adapter.purge();
-    expect(existsSync(backup)).toBe(false); // purge deletes it
-    expect(await adapter.rescan()).toEqual([]); // rescan would not have flagged it
+    expect(existsSync(backup)).toBe(false);
+    expect(await adapter.rescan()).toEqual([]);
   });
 });

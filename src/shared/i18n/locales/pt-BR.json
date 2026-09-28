@@ -2498,6 +2498,12 @@
       "recoverAction": "Recuperar agora",
       "recovered": "Recuperado e verificado. A cópia original foi mantida como backup.",
       "recoverFailed": "Não foi possível recuperar estes dados. Nada foi alterado e a cópia original está intacta."
+    },
+    "manifestUnavailable": {
+      "ariaLabel": "Dados salvos indisponíveis",
+      "title": "Seus dados salvos estão indisponíveis",
+      "message": "O aplicativo não conseguiu ler o manifesto de classificação de dados, então nenhuma parte do seu perfil salvo pode ser aberta agora. Nada está sendo gravado ou apagado — seus dados continuam no disco e voltarão quando o manifesto estiver disponível novamente.",
+      "detail": "Motivo: {{reason}}"
     }
   }
 }

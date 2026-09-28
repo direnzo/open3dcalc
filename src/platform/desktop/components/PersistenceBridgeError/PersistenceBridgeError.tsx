@@ -47,6 +47,17 @@ export const DB_ERROR_EVENT = "open3dcalc:db-error";
  */
 export const PII_UNAVAILABLE_EVENT = "open3dcalc:pii-unavailable";
 
+/**
+ * The main-process refusal code for "the manifest ITSELF could not be loaded".
+ *
+ * Distinct from every per-key reason: on this class no key can be classified,
+ * so the surface says the whole profile is unavailable rather than offering
+ * per-key recovery. Reusing the per-key copy here would describe data that
+ * "could not be decrypted" when the actual failure is that nothing could be
+ * evaluated at all.
+ */
+const MANIFEST_UNAVAILABLE_REASON = "manifest_unavailable";
+
 // `UnavailableEntry` is re-exported from the leaf module so a consumer can name
 // the type without importing this component. It is NOT declared here: a second
 // copy of this shape is a second thing to keep in step with the bridge.
@@ -394,6 +405,32 @@ export function PiiUnavailableBanner(): ReactElement | null {
   }, []);
 
   if (entries === null) return null;
+
+  // An unloadable manifest is not a per-key refusal: there is no key to
+  // recover, and "some of your data could not be decrypted" is the wrong
+  // reading. It gets its own copy that says plainly that nothing is being
+  // written OR deleted, because that is exactly what the bridge now does —
+  // refuses writes and skips the sweep — and a user staring at an empty app
+  // needs to know their data is still on disk. The reason code is shown because
+  // it is what support diagnoses from.
+  if (entries.some((e) => e.reason === MANIFEST_UNAVAILABLE_REASON)) {
+    return (
+      <BridgeErrorSurface
+        variant="banner"
+        label={t("persistence.manifestUnavailable.ariaLabel")}
+        title={t("persistence.manifestUnavailable.title")}
+        message={t("persistence.manifestUnavailable.message")}
+        detail={t("persistence.manifestUnavailable.detail", {
+          reason: MANIFEST_UNAVAILABLE_REASON,
+        })}
+        actionLabel={t("persistence.bridge.dismiss")}
+        actionIcon={<X className="w-3.5 h-3.5" aria-hidden="true" />}
+        onAction={() => setEntries(null)}
+        dismissLabel={t("persistence.bridge.dismiss")}
+        onDismiss={() => setEntries(null)}
+      />
+    );
+  }
 
   const detail = entries
     .map(

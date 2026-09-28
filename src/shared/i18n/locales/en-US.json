@@ -2498,6 +2498,12 @@
       "recoverAction": "Recover now",
       "recovered": "Recovered and verified. The original copy was kept as a backup.",
       "recoverFailed": "Could not recover this data. Nothing was changed and the original copy is untouched."
+    },
+    "manifestUnavailable": {
+      "ariaLabel": "Saved data unavailable",
+      "title": "Your saved data is unavailable",
+      "message": "The app could not read the data classification manifest, so none of your saved profile can be opened right now. Nothing is being written or deleted — your data is still on disk and will return when the manifest is available again.",
+      "detail": "Reason: {{reason}}"
     }
   }
 }

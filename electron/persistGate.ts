@@ -284,6 +284,30 @@ export async function saveGated(
 }
 
 /**
+ * Delete a key from the storage table through the manifest policy.
+ *
+ * A delete does not READ the value, but it still needs the classification: when
+ * the manifest itself will not load, NO key can be classified, and an
+ * unclassifiable row might be PII. "I could not classify this" is not evidence
+ * that the row is stale or unowned, so the delete is REFUSED (fail-closed).
+ * This is the same `manifest_unavailable` distinction `gateLoad`/`gatePersist`
+ * make; treating the refusal as "not a PII key" and deleting anyway is what
+ * turned a broken manifest into destruction of the profile it could not
+ * classify.
+ *
+ * An `unknown_key` row is still deletable: that classification SUCCEEDED, and
+ * the renderer's stale-key sweep depends on being able to remove internal rows
+ * the manifest deliberately does not declare.
+ */
+export function deleteGated(db: MinimalStorageDb, key: string): void {
+  const policy = resolveKeyPolicy(key);
+  if (!policy.allowed && policy.reason === "manifest_unavailable") {
+    throw new CryptoDeniedError("manifest_unavailable");
+  }
+  db.prepare("DELETE FROM storage WHERE key = ?").run(key);
+}
+
+/**
  * Read a key from the storage table through the gate.
  * Returns null when the key is unknown (denied) or absent.
  */

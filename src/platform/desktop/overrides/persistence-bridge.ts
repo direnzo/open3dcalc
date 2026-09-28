@@ -15,7 +15,7 @@
  * double-serialization because localStorage already stores JSON strings.
  */
 
-import { isKeyAllowed } from "@/shared/lib/manifestGate";
+import { isKeyAllowed, isManifestUnavailable } from "@/shared/lib/manifestGate";
 import {
   latchUnavailableClasses,
   type UnavailableEntry,
@@ -36,6 +36,17 @@ let consecutiveDbFailures = 0;
 const MAX_FAILURES_BEFORE_WARN = 5;
 
 /**
+ * True once `loadFromDatabase` has enumerated the stored key set and written
+ * every readable key into localStorage.
+ *
+ * The stale-key sweep's premise is "a DB row with no localStorage counterpart
+ * has been removed at runtime". That premise is only valid AFTER hydration: run
+ * it before, and every row looks stale — which is how an unloadable manifest,
+ * which hydrates nothing, became the deletion of the whole profile.
+ */
+let hydrationCompleted = false;
+
+/**
  * How often the safety-net save runs.
  *
  * Declared here, once, and referred to by name everywhere below — the four
@@ -46,6 +57,70 @@ const MAX_FAILURES_BEFORE_WARN = 5;
  * four comments can, and did.
  */
 const AUTO_SAVE_INTERVAL_MS = 10_000;
+
+/* ------------------------------------------------------------------ */
+/*  Manifest availability                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one class the surface reports when the manifest itself will not load.
+ *
+ * It is NOT a storage key and is not persisted anywhere: `UnavailableEntry`
+ * names "a class of stored data that exists but could not be read", and when
+ * the manifest is unloadable the class is every key at once. `"*"` keeps that
+ * honest while still travelling through the same latch and the same banner as a
+ * per-key refusal. Key NAMES and codes only (§3.2).
+ */
+const MANIFEST_UNAVAILABLE_KEY = "*";
+const MANIFEST_UNAVAILABLE_REASON = "manifest_unavailable";
+
+/**
+ * A save that could not even be evaluated, because the manifest would not load.
+ *
+ * Distinct from `PersistenceSaveError`, which reports a pass that lost SOME
+ * keys: here no key could be classified, so the pass is refused in full. The
+ * old path reached neither error — `collectLocalStorageEntries` filtered every
+ * key out at `isKeyAllowed` and the pass reported "Saved 0 keys", a silent
+ * no-op indistinguishable from a profile with nothing to save.
+ */
+export class ManifestUnavailableError extends Error {
+  readonly reason = MANIFEST_UNAVAILABLE_REASON;
+  constructor() {
+    super(
+      `${MANIFEST_UNAVAILABLE_REASON}: the manifest could not be loaded, so no key could be classified — save refused`,
+    );
+    this.name = "ManifestUnavailableError";
+  }
+}
+
+/**
+ * Latch and announce the whole-profile class, so the banner can show it.
+ *
+ * Called from the manifest failure itself rather than waiting for a per-key
+ * `db:load` rejection: every key is denied before any load is issued, so no
+ * load ever fails and the signal would otherwise never be raised. Idempotent in
+ * effect (the latch holds one entry; re-announcing is harmless).
+ */
+function reportManifestUnavailable(): void {
+  const entry: UnavailableEntry = {
+    key: MANIFEST_UNAVAILABLE_KEY,
+    reason: MANIFEST_UNAVAILABLE_REASON,
+    recoverable: false,
+  };
+  latchUnavailableClasses([entry]);
+  console.warn(
+    `[persistence-bridge] ${MANIFEST_UNAVAILABLE_REASON} — no key could be classified`,
+  );
+  if (typeof document !== "undefined") {
+    const event = new CustomEvent("open3dcalc:pii-unavailable", {
+      detail: { unavailable: [entry] },
+    });
+    // On both, for the same reason as `loadFromDatabase`: a `document`-only
+    // dispatch never reaches a `window` listener (bubbles defaults to false).
+    document.dispatchEvent(event);
+    window.dispatchEvent(event);
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Known localStorage keys used throughout the app                    */
@@ -185,6 +260,19 @@ function noteDbFailure(error: unknown, operation: string): void {
  * look like success and then lose every write.
  */
 async function loadFromDatabase(): Promise<void> {
+  // A structural manifest failure is detected BEFORE the per-key loop: with
+  // the manifest unloadable `isKeyAllowed` denies every key, so the loop below
+  // would skip the whole profile and report a successful empty hydration. Latch
+  // the class instead (a `db:load` is never issued, so nothing else would), and
+  // leave `hydrationCompleted` false so the sweep refuses to run.
+  if (isManifestUnavailable()) {
+    reportManifestUnavailable();
+    console.warn(
+      "[persistence-bridge] Hydration skipped: manifest unavailable",
+    );
+    return;
+  }
+
   const keys = await db().listKeys();
   const values: Array<[string, string]> = [];
   const unavailable: UnavailableEntry[] = [];
@@ -245,6 +333,12 @@ async function loadFromDatabase(): Promise<void> {
     `[persistence-bridge] Loaded ${values.length}/${keys.length} keys from SQLite` +
       (unavailable.length > 0 ? ` (${unavailable.length} quarantined)` : ""),
   );
+
+  // Only now is the sweep's premise valid: every stored key was enumerated and
+  // every readable one is in localStorage. Per-key refusals do not invalidate
+  // it — the refused key is still a DB row with a localStorage counterpart when
+  // the app holds one, and is never deleted either way.
+  hydrationCompleted = true;
 }
 
 /**
@@ -337,6 +431,16 @@ export class PersistenceSaveError extends Error {
  * whole once every key has had its turn.
  */
 async function saveToDatabase(): Promise<void> {
+  // "No keys are eligible" and "no key could be evaluated" are different facts.
+  // Without this check the second collapses into the first: every key is
+  // filtered out at `isKeyAllowed`, the loop runs zero times, and the pass
+  // reports "Saved 0 keys" — a silent no-op whose writes exist only in
+  // localStorage and die on restart.
+  if (isManifestUnavailable()) {
+    reportManifestUnavailable();
+    throw new ManifestUnavailableError();
+  }
+
   const entries = collectLocalStorageEntries();
   const failures: Array<{ key: string; error: unknown }> = [];
   for (const [key, raw] of entries) {
@@ -355,6 +459,30 @@ async function saveToDatabase(): Promise<void> {
  * Keeps the two stores in sync when keys are removed at runtime.
  */
 async function deleteStaleKeys(): Promise<void> {
+  // The sweep deletes a DB row when its key is absent from localStorage. Both
+  // halves of that premise have to be true before it may run:
+  //
+  //  - the manifest must be loadable, or "the key is not in localStorage" is
+  //    indistinguishable from "the key was never evaluated"; and
+  //  - hydration must have completed, or localStorage was never populated and
+  //    every row looks stale.
+  //
+  // Refusing to run is the fail-closed choice: the cost of a skipped sweep is a
+  // stale row surviving one more cycle, and the cost of a wrongly-run sweep is
+  // permanent deletion of a user's profile.
+  if (isManifestUnavailable()) {
+    console.warn(
+      "[persistence-bridge] Skipping stale-key sweep: manifest unavailable",
+    );
+    return;
+  }
+  if (!hydrationCompleted) {
+    console.warn(
+      "[persistence-bridge] Skipping stale-key sweep: hydration not complete",
+    );
+    return;
+  }
+
   try {
     const dbKeys = await db().listKeys();
     const localKeys = new Set<string>();
@@ -429,14 +557,24 @@ export async function initPersistenceBridge(): Promise<void> {
   }
 
   try {
-    // 1. Migrate localStorage → SQLite if first run or a prior startup was
-    //    interrupted. Any partial failure rejects before renderer hydration.
-    await migrateIfNeeded();
+    if (isManifestUnavailable()) {
+      // Neither import nor hydrate: no key can be classified. Latch the class
+      // now, from the manifest failure itself, so the banner can show it — no
+      // `db:load` is ever issued, so no per-key rejection could carry it. The
+      // handlers below are still registered: in-session writes must be REFUSED
+      // (visibly, by `saveToDatabase`) rather than silently skipped, and the
+      // sweep must refuse to run.
+      reportManifestUnavailable();
+    } else {
+      // 1. Migrate localStorage → SQLite if first run or a prior startup was
+      //    interrupted. Any partial failure rejects before renderer hydration.
+      await migrateIfNeeded();
 
-    // 2. Load SQLite data into localStorage only after the complete migration.
-    //    Per-value refusals are collected INSIDE this call and do not reject —
-    //    see `loadFromDatabase`. Only a structural failure reaches the catch.
-    await loadFromDatabase();
+      // 2. Load SQLite data into localStorage only after the complete migration.
+      //    Per-value refusals are collected INSIDE this call and do not reject —
+      //    see `loadFromDatabase`. Only a structural failure reaches the catch.
+      await loadFromDatabase();
+    }
   } catch (error) {
     noteDbFailure(error, "initialize persistence bridge");
     throw error;

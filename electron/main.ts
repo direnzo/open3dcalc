@@ -28,7 +28,12 @@ import {
   adoptSessionPassphrase,
   lockCryptoSession,
 } from "./cryptoCapability.js";
-import { saveGated, gateLoad, readStoredRow } from "./persistGate.js";
+import {
+  saveGated,
+  gateLoad,
+  readStoredRow,
+  deleteGated,
+} from "./persistGate.js";
 import {
   buildRecoveryReport,
   recoverLegacyKey,
@@ -327,8 +332,11 @@ function setupIpcHandlers(): void {
       if (typeof key !== "string" || key.trim().length === 0) {
         throw new Error("Key must be a non-empty string");
       }
-      const stmt = db.$client.prepare("DELETE FROM storage WHERE key = ?");
-      stmt.run(key);
+      // ADR-002 §2.1 fail-closed at the delete path too. A delete needs no
+      // value, but it needs the classification: with the manifest unloadable no
+      // key can be classified, and an unclassifiable row might be PII. See
+      // `deleteGated`.
+      deleteGated(db.$client, key);
     } catch (error) {
       console.error("[db:delete] Error:", error);
       throw error;

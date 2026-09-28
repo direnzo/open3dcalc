@@ -41,12 +41,37 @@ vi.mock("electron", () => ({
   },
 }));
 
+/**
+ * A manifest that can be made genuinely unloadable.
+ *
+ * `resolveKeyPolicy` reads the manifest through `loadManifestFromDisk`; mocking
+ * it here is how a spec drives the `manifest_unavailable` refusal without
+ * deleting the fixture from disk.
+ */
+const manifestState = vi.hoisted(() => ({ unloadable: false }));
+
+vi.mock("../manifestSource.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../manifestSource.js")>();
+  return {
+    ...actual,
+    loadManifestFromDisk: (): ReturnType<
+      typeof actual.loadManifestFromDisk
+    > => {
+      if (manifestState.unloadable) {
+        throw new Error("[manifestSource] synthetic unloadable fixture");
+      }
+      return actual.loadManifestFromDisk();
+    },
+  };
+});
+
 import {
   resolveKeyPolicy,
   gatePersist,
   gateLoad,
   saveGated,
   loadGated,
+  deleteGated,
   type MinimalStorageDb,
 } from "../persistGate.js";
 import { CryptoDeniedError } from "../cryptoCapability.js";
@@ -174,6 +199,9 @@ describe("saveGated / loadGated against a storage table", () => {
             if (sql.startsWith("INSERT INTO storage")) {
               rows.set(params[0] as string, params[1] as string);
             }
+            if (sql.startsWith("DELETE FROM storage")) {
+              rows.delete(params[0] as string);
+            }
             return undefined;
           },
         };
@@ -194,5 +222,83 @@ describe("saveGated / loadGated against a storage table", () => {
     expect(rows.has(UNKNOWN_KEY)).toBe(false);
 
     expect(await loadGated(db, "open3dcalc_missing_key")).toBeNull();
+  });
+});
+
+describe("deleteGated (delete path fails closed on an unloadable manifest)", () => {
+  function makeDb(): { db: MinimalStorageDb; rows: Map<string, string> } {
+    const rows = new Map<string, string>();
+    const db: MinimalStorageDb = {
+      prepare(sql: string) {
+        return {
+          get(...params: unknown[]) {
+            if (sql.startsWith("SELECT value")) {
+              const key = params[0] as string;
+              return rows.has(key) ? { value: rows.get(key) } : undefined;
+            }
+            return undefined;
+          },
+          run(...params: unknown[]) {
+            if (sql.startsWith("INSERT INTO storage")) {
+              rows.set(params[0] as string, params[1] as string);
+            }
+            if (sql.startsWith("DELETE FROM storage")) {
+              rows.delete(params[0] as string);
+            }
+            return undefined;
+          },
+        };
+      },
+    };
+    return { db, rows };
+  }
+
+  it("refuses a PII key when the manifest cannot be classified, and the row survives", () => {
+    const { db, rows } = makeDb();
+    rows.set(PII_KEY, "enc1:ciphertext");
+
+    manifestState.unloadable = true;
+    try {
+      expect(() => deleteGated(db, PII_KEY)).toThrow(CryptoDeniedError);
+    } finally {
+      manifestState.unloadable = false;
+    }
+
+    // The defect: a raw `DELETE` removed the row regardless of classification.
+    expect(rows.get(PII_KEY)).toBe("enc1:ciphertext");
+  });
+
+  it("refuses the delete for a non-PII key too — classification is unknown", () => {
+    const { db, rows } = makeDb();
+    rows.set(NON_PII_KEY, "plain");
+
+    manifestState.unloadable = true;
+    try {
+      expect(() => deleteGated(db, NON_PII_KEY)).toThrow(
+        "manifest_unavailable",
+      );
+    } finally {
+      manifestState.unloadable = false;
+    }
+
+    expect(rows.has(NON_PII_KEY)).toBe(true);
+  });
+
+  it("deletes a declared key when the manifest is available", () => {
+    const { db, rows } = makeDb();
+    rows.set(PII_KEY, "enc1:ciphertext");
+
+    deleteGated(db, PII_KEY);
+
+    expect(rows.has(PII_KEY)).toBe(false);
+  });
+
+  it("still deletes an unknown key — the stale sweep relies on it", () => {
+    const { db, rows } = makeDb();
+    rows.set(UNKNOWN_KEY, "internal");
+
+    deleteGated(db, UNKNOWN_KEY);
+
+    expect(rows.has(UNKNOWN_KEY)).toBe(false);
   });
 });

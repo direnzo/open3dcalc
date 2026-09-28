@@ -47,6 +47,26 @@ const MAX_FAILURES_BEFORE_WARN = 5;
 let hydrationCompleted = false;
 
 /**
+ * What hydration positively did with each manifest-declared key it attempted.
+ *
+ * The sweep's premise — "a DB row with no localStorage counterpart is stale" —
+ * holds only when hydration POSITIVELY populated the key. A key it could not
+ * read (a pre-AAD keyring blob, an authentication failure, a locked session,
+ * or any unforeseen error) is absent from localStorage BY DESIGN, so that
+ * absence is a refusal, not evidence of staleness. Recording the outcome per
+ * key is what lets the sweep tell the two apart: a key marked `not_hydrated`
+ * is preserved, while a key with no record at all was never hydration's to
+ * classify (an internal row the manifest does not declare) and stays
+ * sweep-eligible — see `deleteStaleKeys`.
+ *
+ * It is keyed by the failure's OUTCOME, not its shape — a key that fails for a
+ * new reason is covered without teaching the sweep about that reason — and it
+ * is rebuilt on every hydration so a re-init cannot carry stale records
+ * forward.
+ */
+let hydrationOutcomes = new Map<string, "hydrated" | "not_hydrated">();
+
+/**
  * How often the safety-net save runs.
  *
  * Declared here, once, and referred to by name everywhere below — the four
@@ -276,19 +296,31 @@ async function loadFromDatabase(): Promise<void> {
   const keys = await db().listKeys();
   const values: Array<[string, string]> = [];
   const unavailable: UnavailableEntry[] = [];
+  // Rebuilt per hydration: the record of what THIS pass could positively
+  // populate, so the sweep can refuse to treat a refusal as staleness.
+  hydrationOutcomes = new Map();
 
   for (const key of keys) {
     // SPEC-01 gate: unknown keys are never materialized locally.
     if (!isKeyAllowed(key)) continue;
     try {
       const raw = await db().load(key);
-      if (raw !== null && raw !== undefined) values.push([key, raw]);
+      if (raw !== null && raw !== undefined) {
+        values.push([key, raw]);
+        hydrationOutcomes.set(key, "hydrated");
+      } else {
+        // Enumerated but nothing came back: the key cannot be positively
+        // populated, so it is recorded as unhydrated rather than left absent
+        // and therefore looking stale to the sweep.
+        hydrationOutcomes.set(key, "not_hydrated");
+      }
     } catch (error) {
       // One key, isolated. The reason survives the IPC boundary as the
       // main process's own code, because `db:load` is told to attach it to the
       // rejection rather than relying on Electron's string flattening — which
       // rewrites it to "Error invoking remote method 'db:load': …" and loses
       // every structured field.
+      hydrationOutcomes.set(key, "not_hydrated");
       unavailable.push({
         key,
         reason: refusalCodeFromError(error),
@@ -334,10 +366,10 @@ async function loadFromDatabase(): Promise<void> {
       (unavailable.length > 0 ? ` (${unavailable.length} quarantined)` : ""),
   );
 
-  // Only now is the sweep's premise valid: every stored key was enumerated and
-  // every readable one is in localStorage. Per-key refusals do not invalidate
-  // it — the refused key is still a DB row with a localStorage counterpart when
-  // the app holds one, and is never deleted either way.
+  // Only now is the sweep's premise valid: every stored key was enumerated
+  // and every readable one is in localStorage. A key hydration could NOT read
+  // is the one exception, and `hydrationOutcomes` records it so the sweep does
+  // not mistake its (deliberate) absence for staleness — see `deleteStaleKeys`.
   hydrationCompleted = true;
 }
 
@@ -493,9 +525,22 @@ async function deleteStaleKeys(): Promise<void> {
     }
 
     for (const dbKey of dbKeys) {
-      if (!localKeys.has(dbKey)) {
-        await db().delete(dbKey);
+      if (localKeys.has(dbKey)) continue;
+      // Positive proof, not absence: a declared key may be deleted only when
+      // hydration recorded that it WAS read and populated — its absence now is
+      // then a genuine runtime removal. A key hydration marked `not_hydrated`
+      // (unreadable, or enumerated with no value) is absent BY DESIGN, and
+      // "absent because the read failed" is not evidence of staleness. A key
+      // with no record at all was never hydration's to classify (an internal
+      // row the manifest does not declare), which is what keeps the sweep's
+      // original internal-row cleanup working.
+      if (hydrationOutcomes.get(dbKey) === "not_hydrated") {
+        console.warn(
+          `[persistence-bridge] Preserving unhydrated key ${dbKey}: absence is not staleness`,
+        );
+        continue;
       }
+      await db().delete(dbKey);
     }
   } catch (error) {
     console.warn("[persistence-bridge] Failed to clean stale keys:", error);

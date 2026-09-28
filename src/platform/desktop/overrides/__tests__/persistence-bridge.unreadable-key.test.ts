@@ -76,6 +76,7 @@ const LEGACY_BLOB = `enc1:safeStorage:${sealFake(MARKER).toString("base64")}`;
 let dir: string;
 let db: Database.Database;
 let registered: Array<[string, EventListenerOrEventListenerObject]>;
+let deleteCalls: string[];
 
 function storedValue(key: string): string | null {
   return (
@@ -117,6 +118,7 @@ function sqliteBackedDb(): ElectronAPI["db"] {
       ).run(key, value, Date.now());
     },
     delete: async (key: string) => {
+      deleteCalls.push(key);
       db.prepare("DELETE FROM storage WHERE key = ?").run(key);
     },
     listKeys: async () =>
@@ -153,6 +155,7 @@ function seedProfile(): void {
 
 beforeEach(() => {
   registered = [];
+  deleteCalls = [];
   localStorage.clear();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "o3dc-hydrate-iso-"));
   db = new Database(path.join(dir, "live.sqlite3"));
@@ -221,9 +224,69 @@ describe("one unreadable key does not brick the app", () => {
     expect(localStorage.getItem(CUSTOMERS) ?? "").not.toContain("enc1:");
   });
 
-  it("leaves the unreadable row on disk, untouched", async () => {
-    await initPersistenceBridge();
-    expect(storedValue(CUSTOMERS)).toBe(LEGACY_BLOB);
+  it("leaves the unreadable row on disk, untouched, across sweep cycles", async () => {
+    // The row's absence from localStorage is a REFUSAL, not staleness. If the
+    // 10 s sweep reads it as stale it deletes the very §3.6 recovery target the
+    // refusal exists to preserve, within one cycle. Two cycles here, because a
+    // single one cannot distinguish "survived the sweep" from "the sweep never
+    // ran" — which is the vacuous pass this test used to be.
+    vi.useFakeTimers();
+    try {
+      await initPersistenceBridge();
+      expect(storedValue(CUSTOMERS)).toBe(LEGACY_BLOB);
+
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(storedValue(CUSTOMERS), `cycle ${cycle + 1}`).toBe(LEGACY_BLOB);
+      }
+
+      expect(
+        deleteCalls,
+        "the sweep must never issue a delete for a key it could not read",
+      ).not.toContain(CUSTOMERS);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves a declared key whose read failed for a reason that is not the legacy shape", async () => {
+    // The fix must not pattern-match `enc1:safeStorage:`. ANY per-key read
+    // failure leaves the key absent from localStorage, and absence caused by a
+    // failure is not evidence of staleness — whatever the failure's shape. The
+    // failure below is deliberately an unforeseen one: its code is not in the
+    // known set, so the reason falls back to the generic `unreadable`.
+    const dbApi = (
+      window as unknown as { electronAPI: { db: ElectronAPI["db"] } }
+    ).electronAPI.db;
+    const originalLoad = dbApi.load.bind(dbApi);
+    dbApi.load = async (key: string): Promise<string | null> => {
+      if (key === HISTORY) {
+        throw new Error(
+          "Error invoking remote method 'db:load': Error: a_failure_reason_that_did_not_exist_at_head",
+        );
+      }
+      return originalLoad(key);
+    };
+
+    vi.useFakeTimers();
+    try {
+      await initPersistenceBridge();
+      expect(storedValue(HISTORY)).toBe(HISTORY_VALUE);
+
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(storedValue(HISTORY), `cycle ${cycle + 1}`).toBe(HISTORY_VALUE);
+      }
+
+      expect(
+        deleteCalls,
+        "a new failure reason must be covered by the same exclusion",
+      ).not.toContain(HISTORY);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces WHICH classes are unavailable and why, in a way the UI can read", async () => {

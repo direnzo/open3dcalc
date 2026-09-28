@@ -43,7 +43,10 @@ import {
   resetManifestForTests,
 } from "@/shared/lib/manifestGate";
 import manifestFixture from "../../../../../docs/privacy/SPEC-01-manifest-fixture.json";
-import { initPersistenceBridge } from "../persistence-bridge";
+import {
+  initPersistenceBridge,
+  ManifestUnavailableError,
+} from "../persistence-bridge";
 import {
   getUnavailableClasses,
   resetUnavailableClassesForTests,
@@ -229,6 +232,38 @@ describe("persistence bridge — unloadable manifest", () => {
     // payload: the banner reads the latch and renders the code in its detail.
     render(<PiiUnavailableBanner />);
     expect(document.body.textContent).toContain("manifest_unavailable");
+  });
+
+  it("couples the two invariants: deletes are refused only while writes are too", async () => {
+    // INVARIANT COUPLING. Deferring every delete while the manifest is
+    // unloadable is safe ONLY because the write path is refused at the same
+    // time: a delete refusal alone would let a later write resurrect a value
+    // the user removed, and worse, an unclassifiable row has no owner to
+    // protect it. This spec links the two so a future change that re-enables
+    // writes under an unloadable manifest fails loudly here, next to the
+    // delete-refusal guarantee it invalidates.
+    await initPersistenceBridge();
+    const before = snapshot();
+
+    // The refused WRITE, through the real registered save-on-close handler.
+    window.dispatchEvent(new Event("beforeunload"));
+    await Promise.resolve();
+
+    const refusedWrite = vi
+      .mocked(console.warn)
+      .mock.calls.map(([, error]) => error)
+      .find((error) => error instanceof ManifestUnavailableError);
+    expect(
+      refusedWrite,
+      "a write attempted while the manifest is unloadable must be REFUSED, not silently saved",
+    ).toBeInstanceOf(ManifestUnavailableError);
+
+    // …and the paired delete refusal, in the same run.
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await vi.advanceTimersByTimeAsync(10_000);
+    }
+    expect(deleteCalls, "…and the paired delete refusal holds").toEqual([]);
+    expect(snapshot()).toEqual(before);
   });
 });
 

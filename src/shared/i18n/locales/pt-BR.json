@@ -2487,6 +2487,17 @@
       "runtimeAriaLabel": "Armazenamento local indisponível",
       "runtimeTitle": "As alterações não estão sendo salvas",
       "dismiss": "Dispensar aviso"
+    },
+    "recovery": {
+      "ariaLabel": "Não foi possível abrir alguns dados armazenados",
+      "title": "Não foi possível abrir alguns dos seus dados",
+      "message": "Estas partes do seu perfil estão armazenadas, mas não puderam ser descriptografadas, então não são exibidas agora. Nada foi apagado — os dados continuam no disco, e o restante do seu perfil está funcionando normalmente.",
+      "detail": "Indisponível: {{reason}}",
+      "recoverable": "Pode ser recuperado",
+      "unrecoverable": "Não pode ser recuperado",
+      "recoverAction": "Recuperar agora",
+      "recovered": "Recuperado e verificado. A cópia original foi mantida como backup.",
+      "recoverFailed": "Não foi possível recuperar estes dados. Nada foi alterado e a cópia original está intacta."
     }
   }
 }

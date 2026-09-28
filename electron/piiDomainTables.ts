@@ -56,6 +56,27 @@ export const PII_CONTENT_TABLES = [
 export const PII_STAGE_TABLE = "pii_stage";
 
 /**
+ * The `legacy_residue` table (Beta5 Wave 2, migration 0005).
+ *
+ * Where ADR-001 §3.6 recovery parks the legacy CIPHERTEXT it read, byte for
+ * byte, when it re-seals a value under the new bound envelope. The approved
+ * mode is copy-and-never-delete, so the blob it read is never consumed; it is
+ * its own table for the same two provable reasons as `pii_stage` (the 10 s
+ * bridge sweep deletes every `storage` key the renderer does not have, and the
+ * startup pass materializes a manifest-allowed one into the renderer).
+ *
+ * It is PII-bearing — the blob is a customer value's ciphertext, and a retained
+ * copy of it is residue the user asked to be able to remove.
+ *
+ * DECLARED on the `sqlite_domain_tables` surface of the SPEC-01 fixture as of
+ * `policy_version` 1.8, alongside `pii_stage` (1.6). Both declarations exist
+ * for the same reason: an undeclared PII-bearing table is invisible to the
+ * §2.3 scan, the SPEC-02 §3 purge, the §6 rescan and the erasure post-condition
+ * while holding user data — the `history_entries` defect, one layer out.
+ */
+export const LEGACY_RESIDUE_TABLE = "legacy_residue";
+
+/**
  * Every PII-bearing table declared on the `sqlite_domain_tables` surface.
  *
  * Pinned in BOTH directions to that surface, so it is the exact set and not a
@@ -66,6 +87,7 @@ export const PII_STAGE_TABLE = "pii_stage";
 export const PII_DOMAIN_TABLES = [
   ...PII_CONTENT_TABLES,
   PII_STAGE_TABLE,
+  LEGACY_RESIDUE_TABLE,
 ] as const;
 
 export type PiiDomainTable = (typeof PII_DOMAIN_TABLES)[number];
@@ -73,10 +95,13 @@ export type PiiDomainTable = (typeof PII_DOMAIN_TABLES)[number];
 /**
  * Every SQLite table the erasure, snapshot and backup paths must handle.
  *
- * The same set as the declared PII domain tables — this alias is kept because
- * SPEC-02 §3/§5/§6 and ADR-003 §2.2.2 all speak in terms of ERASURE coverage,
- * which is a different question from what the startup scan counts, and naming
- * the two separately is what stops one answer being used for the other.
+ * The DECLARED set. It is an alias rather than a widened list because
+ * `legacy_residue` is now declared, so the two sets coincide again — but the
+ * alias is kept, because the two are different questions and
+ * `erasureStores.ts` iterates this one: `PII_DOMAIN_TABLES` is the
+ * manifest-pinned inventory, this is the coverage set ("the purge touched it and
+ * the §6 rescan can name what survived"). A table that reached only the first
+ * would still be a silent-residue class.
  */
 export const PII_ERASURE_TABLES = PII_DOMAIN_TABLES;
 

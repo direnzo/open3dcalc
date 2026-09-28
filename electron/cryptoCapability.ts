@@ -599,6 +599,10 @@ export async function decryptFromStorage(
   blob: string,
 ): Promise<string> {
   if (blob.startsWith(LEGACY_UNBOUND_PREFIX)) {
+    // A pre-AAD keyring blob. The IPC layer turns this into a per-key refusal
+    // (`UnreadablePiiValueError`) so one such row cannot reject a whole
+    // profile's hydration, and ADR-001 §3.6 recovery is the only thing that may
+    // read it — through `legacyRecovery.readLegacyValue`, never through here.
     throw new LegacyUnboundBlobError();
   }
   if (blob.startsWith(PROFILE_KEY_PREFIX)) {

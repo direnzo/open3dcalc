@@ -209,6 +209,45 @@ const electronAPI = {
       key: string,
     ): Promise<{ key: string; eliminated: boolean }> =>
       ipcRenderer.invoke("privacy:eliminate-key", key),
+
+    /**
+     * ADR-001 §3.6: which stored classes are unreadable, and whether recovery
+     * can still be attempted for each.
+     *
+     * `reason` is the MAIN process's own refusal code, reused rather than
+     * re-invented on this side — a second vocabulary here would drift, and these
+     * are the codes an operator needs in a bug report. Metadata only: key NAMES
+     * and codes, never a value (§3.2).
+     */
+    recoveryReport: (): Promise<{
+      scannedAt: string;
+      unavailable: Array<{
+        key: string;
+        reason: string;
+        recoverable: boolean;
+      }>;
+    }> => ipcRenderer.invoke("privacy:recovery-report"),
+
+    /**
+     * ADR-001 §3.6 recovery for one key: copy → re-seal → verify.
+     *
+     * `verified` is true only after a fresh read-back through the normal bound
+     * path authenticated and matched the full payload, so a caller can treat
+     * `recovered: true` as "this is now a properly bound envelope" rather than
+     * "a write was attempted". NEVER deletes the legacy blob: the copy is
+     * retained as disclosed residue and the user removes it through the erasure
+     * flow.
+     */
+    recoverKey: (
+      key: string,
+    ): Promise<{
+      key: string;
+      recovered: boolean;
+      verified: boolean;
+      shape?: string;
+      reason?: string;
+      residueRetained?: boolean;
+    }> => ipcRenderer.invoke("privacy:recover-key", key),
   },
 } as const;
 

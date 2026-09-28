@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, RefreshCw, X } from "lucide-react";
+// The LEAF module, deliberately not the bridge: the bridge is what a test of
+// the entry point mocks, so importing it from a component mounted by that same
+// entry point makes every such mock incomplete. See unavailableClasses.ts.
+import {
+  getUnavailableClasses,
+  type UnavailableEntry,
+} from "@/platform/desktop/overrides/unavailableClasses";
 
 /**
  * The two faces of a persistence bridge that could not do its job.
@@ -27,6 +34,23 @@ import { AlertTriangle, RefreshCw, X } from "lucide-react";
 
 /** The event the bridge dispatches on `document` once failures pile up. */
 export const DB_ERROR_EVENT = "open3dcalc:db-error";
+
+/**
+ * The event the bridge dispatches when a key exists but could not be read.
+ *
+ * LISTENED ON `window`, not `document`, and the bridge dispatches on both. That
+ * is not redundancy: jsdom (and the DOM) default `CustomEvent.bubbles` to
+ * false, so an event dispatched on `document` never reaches a listener on
+ * `window`. Dispatching only on `document` made this signal unobservable from
+ * anywhere except a `document` listener, which is how an announcement nobody
+ * can receive becomes indistinguishable from no announcement.
+ */
+export const PII_UNAVAILABLE_EVENT = "open3dcalc:pii-unavailable";
+
+// `UnavailableEntry` is re-exported from the leaf module so a consumer can name
+// the type without importing this component. It is NOT declared here: a second
+// copy of this shape is a second thing to keep in step with the bridge.
+export type { UnavailableEntry } from "@/platform/desktop/overrides/unavailableClasses";
 
 interface BridgeErrorSurfaceProps {
   /** Names the landmark, so it is reachable and announced as a region. */
@@ -305,6 +329,126 @@ export function DbErrorBanner(): ReactElement | null {
       onAction={() => setMessage(null)}
       dismissLabel={t("persistence.bridge.dismiss")}
       onDismiss={() => setMessage(null)}
+    />
+  );
+}
+
+/**
+ * Keep only entries that are shaped like a refusal: a key NAME and a code.
+ *
+ * An event `detail` is untrusted input — anything can dispatch on `window` — so
+ * a malformed entry is dropped rather than rendered. A refusal must never
+ * degrade into `[object Object]` in a surface whose whole job is to be
+ * diagnosable.
+ */
+function parseUnavailable(raw: unknown): UnavailableEntry[] {
+  return Array.isArray(raw)
+    ? raw.filter(
+        (u): u is UnavailableEntry =>
+          typeof u === "object" &&
+          u !== null &&
+          typeof (u as UnavailableEntry).key === "string" &&
+          typeof (u as UnavailableEntry).reason === "string",
+      )
+    : [];
+}
+
+/**
+ * Per-key isolation, made visible.
+ *
+ * The app now STARTS with a profile whose legacy blobs it cannot read: the
+ * bridge quarantines the unreadable keys, hydrates every other key, and says
+ * so. This banner is the other half of that promise — without it the isolation
+ * is invisible, and "my customers are gone" is indistinguishable from "this app
+ * decided not to show you your customers", which is the reading a user forms
+ * from empty state. It states explicitly that nothing was deleted.
+ *
+ * The codes are rendered verbatim rather than translated: they are the
+ * main process's own refusal codes, they are what a bug report needs, and a
+ * paraphrase of `legacy_unbound_encryption` diagnoses nothing. Only key NAMES
+ * and codes reach this surface — never a value (§3.2).
+ */
+export function PiiUnavailableBanner(): ReactElement | null {
+  const { t } = useTranslation();
+  // Read the latch in the INITIALIZER, not in an effect. The bridge raised this
+  // during `initPersistenceBridge()`, which main.tsx awaits before rendering, so
+  // the event has already fired by the time this mounts and a listener alone
+  // would subscribe to nothing. A lazy initializer reads that latched state
+  // during the first render; setting it from inside the effect body would be a
+  // second render pass for a value that is already known.
+  const [entries, setEntries] = useState<UnavailableEntry[] | null>(() => {
+    const latched = parseUnavailable(getUnavailableClasses());
+    return latched.length > 0 ? latched : null;
+  });
+  const [outcome, setOutcome] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onUnavailable = (event: Event): void => {
+      const detail = (event as CustomEvent<{ unavailable?: unknown }>).detail;
+      const parsed = parseUnavailable(detail?.unavailable);
+      if (parsed.length > 0) setEntries(parsed);
+    };
+    window.addEventListener(PII_UNAVAILABLE_EVENT, onUnavailable);
+    return () =>
+      window.removeEventListener(PII_UNAVAILABLE_EVENT, onUnavailable);
+  }, []);
+
+  if (entries === null) return null;
+
+  const detail = entries
+    .map(
+      (e) =>
+        `${e.key} (${e.reason}) — ${
+          e.recoverable
+            ? t("persistence.recovery.recoverable")
+            : t("persistence.recovery.unrecoverable")
+        }`,
+    )
+    .join("\n");
+
+  // Recovery is opt-in and per key: it is the only action offered, and a failure
+  // reports itself rather than retrying, because every failure path leaves the
+  // original bytes untouched and there is nothing a second attempt would fix.
+  const recoverable = entries.find((e) => e.recoverable);
+
+  const onRecover = (): void => {
+    if (!recoverable) return;
+    const recover = window.electronAPI?.privacy?.recoverKey;
+    if (typeof recover !== "function") {
+      setOutcome(t("persistence.recovery.recoverFailed"));
+      return;
+    }
+    void recover(recoverable.key)
+      .then((result: { recovered: boolean; verified: boolean }) => {
+        // `verified` is the only field that means the round-trip was checked;
+        // a `recovered: true` without it would be a claim, not a result.
+        setOutcome(
+          result.recovered && result.verified
+            ? t("persistence.recovery.recovered")
+            : t("persistence.recovery.recoverFailed"),
+        );
+        setEntries(
+          (current) =>
+            current?.filter((e) => e.key !== recoverable.key) ?? null,
+        );
+      })
+      .catch(() => setOutcome(t("persistence.recovery.recoverFailed")));
+  };
+
+  return (
+    <BridgeErrorSurface
+      variant="banner"
+      label={t("persistence.recovery.ariaLabel")}
+      title={t("persistence.recovery.title")}
+      message={t("persistence.recovery.message")}
+      detail={[t("persistence.recovery.detail", { reason: detail }), outcome]
+        .filter(Boolean)
+        .join("\n")}
+      actionLabel={t("persistence.recovery.recoverAction")}
+      actionIcon={<RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />}
+      onAction={onRecover}
+      dismissLabel={t("persistence.bridge.dismiss")}
+      onDismiss={() => setEntries(null)}
     />
   );
 }

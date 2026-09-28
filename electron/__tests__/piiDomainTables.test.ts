@@ -62,6 +62,10 @@ const MARKER = "Fernanda Sintética <fernanda@exemplo.teste>";
 const EXPECTED_PII_TABLES = [
   "customers",
   "history_entries",
+  // Declared at policy_version 1.8 (ADR-001 §3.6 recovery residue). It is PII
+  // and now INVENTORIED, which is the point: an undeclared PII table is the
+  // Wave 0 `history_entries` defect repeated.
+  "legacy_residue",
   "pii_stage",
   "quote_items",
   "quotes",
@@ -98,11 +102,15 @@ function seedProfile(): void {
     "CREATE TABLE IF NOT EXISTS history_entries (id TEXT PRIMARY KEY, timestamp INTEGER, type TEXT, name TEXT, summary TEXT, total_cost REAL, sell_price REAL, profit REAL, result_json TEXT, snapshot_json TEXT)",
   );
   // Present but EMPTY: this profile's premise is "every declared PII domain
-  // table exists", and the stage table is declared as of policy_version 1.6. The
+  // table exists". `pii_stage` is declared as of policy_version 1.6 and
+  // `legacy_residue` as of 1.8, so this profile now carries both. The
   // absent-table case has its own test below, and that is the one that has to
   // keep passing.
   db.exec(
     "CREATE TABLE IF NOT EXISTS pii_stage (transaction_id TEXT NOT NULL, generation INTEGER NOT NULL, privacy_epoch INTEGER NOT NULL, schema_version INTEGER NOT NULL, envelope_version INTEGER NOT NULL, state TEXT NOT NULL, blob TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (transaction_id, generation))",
+  );
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS legacy_residue (key TEXT PRIMARY KEY NOT NULL, shape TEXT NOT NULL, blob TEXT NOT NULL, recovered_value_sha TEXT NOT NULL, recovered_at INTEGER NOT NULL)",
   );
 
   db.prepare("INSERT INTO customers (id, name, email) VALUES (?, ?, ?)").run(

@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0",
-  "policy_version": "1.7",
+  "policy_version": "1.8",
   "keys": [
     {
       "key": "open3dcalc_consent_v1",
@@ -264,6 +264,25 @@
         "max_days": 1
       },
       "purpose": "Staging table for re-homing a PII value between storage layouts (Beta5 Wave 1, migration 0004_pii_stage.sql): one row is the SEALED (enc1:…) preimage of one value, beside the AAD components it is bound to (privacy_epoch, schema_version, envelope_version) and the state/generation of the transaction that owns it. PII-bearing because the preimage IS the user's value, sealed — it is never plaintext. A dedicated table rather than a `storage` row because the 10 s persistence-bridge sweep deletes every storage key the renderer does not have, and the startup pass decrypts a manifest-allowed one straight back into the renderer as plaintext (SPEC-02 §3.1). Retention: the row exists only for the duration of the re-homing transaction — the state machine discards it at S6 — and there is NO TTL sweeper, so the SPEC-02 §3 row 12 purge is the only backstop; the declared max_days is the intended ceiling, not an enforced timer (same disclosure as appdata_temp_staging). Export: never through any user-facing path, since SPEC-03 envelopes are built from the renderer stores, but `db:export` and an unredacted diagnostic backup copy the raw file, so this declares the REQUIRED policy rather than describing the code. DO NOT BUMP `version` ON THIS ENTRY (or on any PII at-rest entry) UNTIL THE LANDMINE IS CLEARED: the AAD's S is a hardcoded constant, PII_SCHEMA_VERSION = 1 in electron/cryptoCapability.ts, and the day it becomes a per-key manifest lookup a `version` bump re-labels every existing envelope's S and strands it. See ADR-001 §3.3 TODO(hermes) and SPEC-04 §6.",
+      "legal_basis": "consent",
+      "owner": "demeter",
+      "version": "1.0"
+    },
+    {
+      "key": "legacy_residue",
+      "surface": "sqlite_domain_tables",
+      "platforms": ["electron"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "diagnostic_only",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Retained LEGACY CIPHERTEXT for one PII value (Beta5 Wave 2, migration 0005_legacy_residue.sql, ADR-001 §3.6). One row is the pre-remediation at-rest blob exactly as it was found in `storage` — an `enc1:safeStorage:<base64>` raw OS-keyring output, or an `enc1:envelope:{…}` v1.1 self-asserted-AAD envelope — written when §3.6 recovery re-seals that value under the new bound envelope. PII-bearing because the blob IS a sealed copy of a user value and is the only retained copy after a re-homing, so it must be purgeable and redacted on the same terms as live PII. Never plaintext: both legacy shapes are ciphertext. A dedicated table rather than a `storage` row for the two provable reasons recorded for pii_stage — the 10 s persistence-bridge sweep DELETES every `storage` key absent from renderer localStorage (a residue row would be gone within one poll, silently dropping the only retained copy of a value that may exist nowhere else), and the startup pass materializes a manifest-ALLOWED `storage` row into the renderer. RETENTION IS DELIBERATE AND LONG: the approved mode is COPY-AND-NEVER-DELETE, because no mechanism can prove an old client is not still writing that row, and the passphrase fallback never replicated a value anywhere else, so deleting here is unrecoverable by construction. The blob survives until the user runs the SPEC-02 erasure flow, so retention is declared `user_controlled` / `max_days: 0` — no automatic expiry, removal is the user's erasure action — which is the ABSENCE of a retention feature rather than one. Declaring this table is the Wave 0 `history_entries` lesson applied forward: an undeclared PII-bearing table is invisible to the ADR-002 §2.3 scan, the SPEC-02 §3 purge, the §6 rescan and the erasure post-condition, while holding recovered user data. Export: never through any user-facing path, since SPEC-03 envelopes are built from the renderer stores, but `db:export` and an unredacted diagnostic backup copy the raw file, so this declares the REQUIRED policy rather than describing the code. DO NOT BUMP `version` ON THIS ENTRY (or on any PII at-rest entry) UNTIL THE LANDMINE IS CLEARED: the AAD's S is a hardcoded constant, PII_SCHEMA_VERSION = 1 in electron/cryptoCapability.ts, and the day it becomes a per-key manifest lookup a `version` bump re-labels every existing envelope's S and strands it. See ADR-001 §3.3 TODO(hermes) and SPEC-04 §6.",
       "legal_basis": "consent",
       "owner": "demeter",
       "version": "1.0"

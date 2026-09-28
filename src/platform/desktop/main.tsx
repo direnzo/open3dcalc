@@ -7,6 +7,7 @@ import { initPersistenceBridge } from "@/platform/desktop/overrides/persistence-
 import { initTheme } from "@/platform/desktop/hooks/useTheme";
 import {
   DbErrorBanner,
+  PiiUnavailableBanner,
   StartupBridgeFailure,
 } from "@/platform/desktop/components/PersistenceBridgeError/PersistenceBridgeError";
 
@@ -28,11 +29,21 @@ initPersistenceBridge()
   .then(() => {
     ReactDOM.createRoot(document.getElementById("root")!).render(
       <React.StrictMode>
-        {/* The production subscriber for the bridge's `open3dcalc:db-error`
-            signal. It lives here rather than in App because the app is not
-            guaranteed to mount — a bridge that works at startup and fails
-            later still has to be able to say so. */}
+        {/* The production subscribers for the bridge's two signals. They live
+            here rather than in App because the app is not guaranteed to mount —
+            a bridge that works at startup and fails later still has to be able
+            to say so.
+
+            `PiiUnavailableBanner` is the visible half of ADR-001 §3.6 per-key
+            isolation: the app now STARTS on a profile whose legacy blobs it
+            cannot read, quarantines those keys and hydrates the rest, and this
+            is what stops that from being indistinguishable from data loss. It
+            is mounted unconditionally because the event fires DURING
+            `initPersistenceBridge()`, i.e. before this tree exists — the
+            banner reads it from a ref-free module-level latch so a signal
+            raised before mount is not lost. */}
         <DbErrorBanner />
+        <PiiUnavailableBanner />
         <App />
       </React.StrictMode>,
     );

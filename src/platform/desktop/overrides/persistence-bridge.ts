@@ -16,6 +16,17 @@
  */
 
 import { isKeyAllowed } from "@/shared/lib/manifestGate";
+import {
+  latchUnavailableClasses,
+  type UnavailableEntry,
+} from "@/platform/desktop/overrides/unavailableClasses";
+
+/**
+ * Re-exported so the bridge's own type is reachable from the module a consumer
+ * already imports. The VALUE comes from the leaf module above; this is an
+ * alias, not a second latch, so the two cannot disagree.
+ */
+export type { UnavailableEntry } from "@/platform/desktop/overrides/unavailableClasses";
 
 /* ------------------------------------------------------------------ */
 /*  Error tracking                                                      */
@@ -138,29 +149,150 @@ function noteDbFailure(error: unknown, operation: string): void {
 /* ------------------------------------------------------------------ */
 
 /**
+ * A class of stored data that exists but could not be read, and why.
+ *
+ * Distinct from an error, and distinct from an empty value: the app continues,
+ * the rest of the profile loads, and the user is told which class is missing and
+ * what to do about it. A refusal MUST NOT look like data loss — a store hydrated
+ * with an empty string would both read as "you have no customers" and then
+ * overwrite the very row that could not be read on the next save.
+ */
+/**
  * Load all persisted data from SQLite into localStorage.
  * Called once at app startup (after any migration).
  *
- * Each SQLite value is stored as a JSON string, which is exactly
- * what localStorage expects — so we move the raw strings as-is.
+ * ## Per-key isolation, and why it is not optional
+ *
+ * This used to `await db().load(key)` inside a bare loop, so a single unreadable
+ * row rejected the whole function. An ADR-001 §3.6 refusal — a pre-remediation
+ * `enc1:safeStorage:` blob, a 1.1 envelope — propagated out of here, out of
+ * `initPersistenceBridge`, and `main.tsx` rendered `<StartupBridgeFailure/>`
+ * instead of `<App/>`. Worse, the throw happened at step 2, so the app never
+ * registered its `beforeunload` handler or its auto-save interval AT ALL: the
+ * profile could not be saved even for the keys that were perfectly readable. One
+ * unreadable row took down the application.
+ *
+ * The OS keyring was the default path before the Wave 2 remediation, so such
+ * rows are exactly what a normal upgrading user has. This is the most likely
+ * first-run experience of the upgrade.
+ *
+ * So a per-value refusal is now collected and reported, and hydration continues.
+ * Fail-closed is preserved on both sides: an unreadable value is never written
+ * into `localStorage` (it is not decrypted, and it is not materialized as the raw
+ * ciphertext either), and it is never deleted from SQLite. A STRUCTURAL failure —
+ * `listKeys` itself failing, an unreadable manifest — is still terminal, because
+ * then there is no key set to isolate and hydrating from stale localStorage would
+ * look like success and then lose every write.
  */
 async function loadFromDatabase(): Promise<void> {
   const keys = await db().listKeys();
   const values: Array<[string, string]> = [];
+  const unavailable: UnavailableEntry[] = [];
 
   for (const key of keys) {
     // SPEC-01 gate: unknown keys are never materialized locally.
     if (!isKeyAllowed(key)) continue;
-    const raw = await db().load(key);
-    if (raw !== null && raw !== undefined) values.push([key, raw]);
+    try {
+      const raw = await db().load(key);
+      if (raw !== null && raw !== undefined) values.push([key, raw]);
+    } catch (error) {
+      // One key, isolated. The reason survives the IPC boundary as the
+      // main process's own code, because `db:load` is told to attach it to the
+      // rejection rather than relying on Electron's string flattening — which
+      // rewrites it to "Error invoking remote method 'db:load': …" and loses
+      // every structured field.
+      unavailable.push({
+        key,
+        reason: refusalCodeFromError(error),
+        recoverable: RECOVERABLE_REASONS.has(refusalCodeFromError(error)),
+      });
+    }
   }
 
   // Read every row successfully before touching localStorage. A DB read error
   // must reject startup without applying a partial hydration to the renderer.
   for (const [key, raw] of values) localStorage.setItem(key, raw);
+
+  if (unavailable.length > 0) {
+    // Latched before the event, because the event is raised with no subscriber
+    // mounted yet — see `unavailableClasses.ts` for why the latch is a separate
+    // leaf module rather than a field of this one.
+    latchUnavailableClasses(unavailable);
+    // Announced, not silently skipped: a class of data the user cannot see
+    // must be said out loud, or "my customers are gone" is indistinguishable
+    // from "this app decided not to show you your customers".
+    console.warn(
+      `[persistence-bridge] ${unavailable.length} key(s) unavailable and quarantined: ` +
+        unavailable.map((u) => `${u.key} (${u.reason})`).join(", "),
+    );
+    if (typeof document !== "undefined") {
+      // On BOTH `document` and `window`. The `document`-only dispatch is what
+      // made this unobservable in practice: jsdom's `CustomEvent` defaults
+      // `bubbles` to false, and a non-bubbling event dispatched on `document`
+      // never reaches a listener registered on `window` — which is where a
+      // React component or a plain subscriber would sit. The event is announced,
+      // not silently skipped, and an announcement nobody can receive is the same
+      // as no announcement.
+      const event = new CustomEvent("open3dcalc:pii-unavailable", {
+        detail: { unavailable },
+      });
+      document.dispatchEvent(event);
+      window.dispatchEvent(event);
+    }
+  }
+
   console.log(
-    `[persistence-bridge] Loaded ${values.length}/${keys.length} keys from SQLite`,
+    `[persistence-bridge] Loaded ${values.length}/${keys.length} keys from SQLite` +
+      (unavailable.length > 0 ? ` (${unavailable.length} quarantined)` : ""),
   );
+}
+
+/**
+ * Refusals where the bytes are intact and only the old SHAPE is refused, so
+ * ADR-001 §3.6 recovery can still be attempted. Mirrors `RECOVERABLE_REASONS`
+ * in the main process; kept as its own set because the renderer must not import
+ * main-process modules across the IPC boundary.
+ */
+const RECOVERABLE_REASONS = new Set([
+  "legacy_unbound_encryption",
+  "legacy_envelope_v1_1",
+]);
+
+/**
+ * Recover the main process's refusal code from a rejected `db:load`.
+ *
+ * Electron flattens an error crossing `ipcRenderer.invoke` into a plain string
+ * prefixed "Error invoking remote method 'db:load': ", so `error.reason` and
+ * `error.code` do not survive. Two sources, in order of trust:
+ *
+ *  1. the structured fields, when the rejection is direct (a test, or a future
+ *     structured-result contract); then
+ *  2. the code as a substring of the flattened message, which is why
+ *     `electron/main.ts` puts the code IN the message before re-throwing.
+ *
+ * The fallback is a generic `unreadable` rather than a guess: inventing a
+ * specific reason from a mangled string is how a wrong reason reaches a user.
+ */
+function refusalCodeFromError(error: unknown): string {
+  const structured = (error as { reason?: unknown } | null)?.reason;
+  if (typeof structured === "string" && structured.length > 0) {
+    return structured;
+  }
+  const message = String(
+    (error as { message?: unknown } | null)?.message ?? error,
+  );
+  for (const code of [
+    "legacy_unbound_encryption",
+    "legacy_envelope_v1_1",
+    "authentication_failed",
+    "no_capability",
+    "profile_data_key_unavailable",
+    "locked",
+    ...RECOVERABLE_REASONS,
+  ]) {
+    if (message.includes(code)) return code;
+  }
+  return "unreadable";
 }
 
 /**
@@ -302,6 +434,8 @@ export async function initPersistenceBridge(): Promise<void> {
     await migrateIfNeeded();
 
     // 2. Load SQLite data into localStorage only after the complete migration.
+    //    Per-value refusals are collected INSIDE this call and do not reject —
+    //    see `loadFromDatabase`. Only a structural failure reaches the catch.
     await loadFromDatabase();
   } catch (error) {
     noteDbFailure(error, "initialize persistence bridge");

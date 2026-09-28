@@ -2487,6 +2487,17 @@
       "runtimeAriaLabel": "Local storage unavailable",
       "runtimeTitle": "Your changes are not being saved",
       "dismiss": "Dismiss"
+    },
+    "recovery": {
+      "ariaLabel": "Some stored data could not be opened",
+      "title": "Some of your data could not be opened",
+      "message": "These parts of your profile are stored but could not be decrypted, so they are not shown right now. Nothing was deleted — the data is still on disk, and the rest of your profile is working normally.",
+      "detail": "Unavailable: {{reason}}",
+      "recoverable": "Can be recovered",
+      "unrecoverable": "Cannot be recovered",
+      "recoverAction": "Recover now",
+      "recovered": "Recovered and verified. The original copy was kept as a backup.",
+      "recoverFailed": "Could not recover this data. Nothing was changed and the original copy is untouched."
     }
   }
 }

@@ -28,7 +28,13 @@ import {
   adoptSessionPassphrase,
   lockCryptoSession,
 } from "./cryptoCapability.js";
-import { saveGated, loadGated } from "./persistGate.js";
+import { saveGated, gateLoad, readStoredRow } from "./persistGate.js";
+import {
+  buildRecoveryReport,
+  recoverLegacyKey,
+  UnreadablePiiValueError,
+  type RecoveryResult,
+} from "./legacyRecovery.js";
 import { buildScanReport, summarizeReport } from "./legacyScan.js";
 import {
   PII_DOMAIN_TABLES,
@@ -238,9 +244,54 @@ function setupIpcHandlers(): void {
         // SPEC-01 manifest — non-PII passes through, PII is decrypted from
         // its ADR-001 capability blob, legacy plaintext stays readable
         // (quarantined in S4), unknown keys return null (default-deny).
-        return await loadGated(db.$client, key);
+        //
+        // A value that exists but cannot be read is REFUSED, not returned as
+        // null: null means "no such key", and a renderer that read it as
+        // empty would write over a row it could not read. `unreadable` is a
+        // distinct answer that carries the main process's reason code across
+        // the boundary.
+        const stored = readStoredRow(db.$client, key);
+        if (stored === null) return null;
+        const outcome = await gateLoad(key, stored);
+        if (outcome.action === "unreadable") {
+          throw new UnreadablePiiValueError(key, outcome.reason);
+        }
+        if (outcome.action === "denied") return null;
+        return outcome.value;
       } catch (error) {
         console.error("[db:load] Error:", error);
+        throw error;
+      }
+    },
+  );
+
+  // ── privacy:recovery-report (ADR-001 §3.6) ──────────────────────────
+  // Which classes of stored data are unavailable, and whether §3.6 recovery
+  // can still be attempted. Metadata only: key NAMES and reason codes, never a
+  // value (§3.2).
+  ipcMain.handle("privacy:recovery-report", async (event) => {
+    try {
+      assertTrustedSender(event);
+      return await buildRecoveryReport(db.$client);
+    } catch (error) {
+      console.error("[privacy:recovery-report] Error:", error);
+      throw error;
+    }
+  });
+
+  // ── privacy:recover-key (ADR-001 §3.6) ──────────────────────────────
+  // copy → re-seal → verify, for one key. Never deletes the legacy blob.
+  ipcMain.handle(
+    "privacy:recover-key",
+    async (event, key: string): Promise<RecoveryResult> => {
+      try {
+        assertTrustedSender(event);
+        if (typeof key !== "string" || key.trim().length === 0) {
+          throw new Error("Key must be a non-empty string");
+        }
+        return await recoverLegacyKey(db.$client, key);
+      } catch (error) {
+        console.error("[privacy:recover-key] Error:", error);
         throw error;
       }
     },

@@ -52,6 +52,11 @@ class FakeObjectStore {
 
   put(value: unknown, key: string): FakeRequest<string> {
     return this.tx.enqueue(() => {
+      // An injected failure models a storage backend that refuses this write
+      // (a quota error, an aborted transaction). It must surface as a request
+      // error so the vault's `commit_failed` path is exercised for real.
+      const fail = this.tx.shouldFailPut();
+      if (fail !== null) throw fail;
       this.tx.data(this.name).set(key, value);
       return key;
     });
@@ -85,6 +90,7 @@ class FakeTransaction {
     readonly mode: IDBTransactionMode,
     storeNames: string[],
     private readonly tally: (delta: number) => void,
+    readonly shouldFailPut: () => unknown | null = () => null,
   ) {
     for (const name of storeNames) {
       if (!db.stores.has(name)) {
@@ -159,6 +165,8 @@ class FakeDatabase {
   constructor(
     readonly name: string,
     readonly version: number,
+    /** Injected per-`put` failure, or null. Set at creation by the factory. */
+    readonly shouldFailPut: () => unknown | null = () => null,
   ) {}
 
   get objectStoreNames(): { contains: (n: string) => boolean } {
@@ -183,14 +191,20 @@ class FakeDatabase {
       );
     }
     const names = typeof storeNames === "string" ? [storeNames] : storeNames;
-    return new FakeTransaction(this, mode, names, (delta) => {
-      if (delta > 0) this.stats.readWriteOpen++;
-      else this.stats.readWriteOpen--;
-      this.stats.maxConcurrentReadWrite = Math.max(
-        this.stats.maxConcurrentReadWrite,
-        this.stats.readWriteOpen,
-      );
-    });
+    return new FakeTransaction(
+      this,
+      mode,
+      names,
+      (delta) => {
+        if (delta > 0) this.stats.readWriteOpen++;
+        else this.stats.readWriteOpen--;
+        this.stats.maxConcurrentReadWrite = Math.max(
+          this.stats.maxConcurrentReadWrite,
+          this.stats.readWriteOpen,
+        );
+      },
+      this.shouldFailPut,
+    );
   }
 
   readonly stats = { readWriteOpen: 0, maxConcurrentReadWrite: 0 };
@@ -220,6 +234,16 @@ export interface FakeIndexedDb {
   /** Names of the databases that have been opened, so a test can assert that
    *  a refused call never reached storage at all. */
   databaseNames(): string[];
+  /**
+   * Make the Nth `put` from now fail, then stop failing. `null` disarms.
+   *
+   * This models a storage backend that refuses a write — the interrupted
+   * startup a recovery marker exists for. The counter is per-call so a test
+   * can arm it, observe the interruption, then disarm for the resume.
+   */
+  failPutsOnCall(n: number | null): void;
+  /** How many `put` calls have been observed. */
+  putCalls(): number;
 }
 
 /**
@@ -228,6 +252,17 @@ export interface FakeIndexedDb {
  */
 export function createFakeIndexedDb(): FakeIndexedDb {
   const databases = new Map<string, FakeDatabase>();
+  // Set by `failPutsOnCall`; read on every put so a test can arm it mid-run.
+  let failPutOnCall: number | null = null;
+  let putCalls = 0;
+  const shouldFailPut = (): unknown | null => {
+    if (failPutOnCall === null) return null;
+    putCalls += 1;
+    if (putCalls === failPutOnCall) {
+      return new DOMException("simulated put failure", "UnknownError");
+    }
+    return null;
+  };
 
   const factory = {
     open(name: string, version?: number): FakeRequest<FakeDatabase> {
@@ -241,7 +276,7 @@ export function createFakeIndexedDb(): FakeIndexedDb {
           request.onsuccess?.({ target: request });
           return;
         }
-        const db = new FakeDatabase(name, requested);
+        const db = new FakeDatabase(name, requested, shouldFailPut);
         databases.set(name, db);
         request.result = db;
         // `onupgradeneeded` fires before `onsuccess`, and the caller creates
@@ -292,6 +327,13 @@ export function createFakeIndexedDb(): FakeIndexedDb {
     },
     databaseNames(): string[] {
       return [...databases.keys()];
+    },
+    failPutsOnCall(n: number | null): void {
+      failPutOnCall = n;
+      putCalls = 0;
+    },
+    putCalls(): number {
+      return putCalls;
     },
   };
 }

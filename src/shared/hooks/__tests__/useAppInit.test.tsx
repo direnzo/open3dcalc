@@ -64,6 +64,31 @@ import { useHistoryStore } from "@/shared/stores/historyStore";
 import { useLayoutStore } from "@/shared/stores/layoutStore";
 import { useTutorialStore } from "@/shared/stores/tutorialStore";
 import type { HistoryEntry } from "@/shared/types";
+import {
+  configurePiiStoreRuntime,
+  resetPiiStoreHydrationForTests,
+  unlockPiiStoresAndRehydrate,
+  whenPiiWritesSettled,
+} from "@/shared/lib/crypto/piiStoreHydration";
+import {
+  createPiiStore,
+  lockAllPiiStores,
+  resetPiiStoreRuntimeForTests,
+} from "@/shared/lib/crypto/piiStore";
+import { setPiiStoreEnvironment } from "@/shared/lib/crypto/piiStoreCapability";
+import { zeroizeSessionPassphrase } from "@/shared/lib/crypto/passphraseSession";
+import { PII_STORE_ENVIRONMENT } from "@/shared/lib/crypto/__tests__/piiStoreFixtures";
+import { createFakeIndexedDb } from "@/shared/test/fakeIndexedDb";
+
+/**
+ * The legacy migration no longer writes PII to `localStorage`: the three stores
+ * persist through the encrypted vault. So these specs provision a capable vault
+ * and assert the migrated history reaches it, while the durable marker, the
+ * resume-after-interruption path and the verify-before-delete ordering are
+ * asserted exactly as before.
+ */
+const HISTORY_VAULT_KEY = "open3dcalc_history_v2";
+const VAULT_PASS = "senha-sintética-useappinit-4242";
 
 function createCombinedLegacyFixtures() {
   const result = (totalCost: number, sellPrice: number) => ({
@@ -168,7 +193,76 @@ function createCombinedLegacyFixtures() {
 }
 
 describe("useAppInit tutorial auto-start", () => {
+  let vaultIdb: ReturnType<typeof createFakeIndexedDb>;
+  const vaultOptions = () => ({
+    indexedDb: vaultIdb.factory,
+    environment: PII_STORE_ENVIRONMENT,
+  });
+
+  /**
+   * Unlock the vault and wake the migration's target store.
+   *
+   * The migration now persists history through the vault, so a spec that wants
+   * to observe the migrated records must have a capable, unlocked vault. Timers
+   * are real here because the fake IndexedDB resolves on a macrotask; the
+   * spec's own fake timers are installed afterwards.
+   */
+  async function unlockVault(): Promise<void> {
+    vi.useRealTimers();
+    await unlockPiiStoresAndRehydrate(VAULT_PASS, vaultOptions());
+    await settleWrites();
+    // Simulate a fresh profile: the store starts empty. Drain the resulting
+    // empty-state write so it cannot race the migration's own write.
+    useHistoryStore.setState({ entries: [] });
+    await settleWrites();
+  }
+
+  /** Drain the vault write queue through a macrotask the fake IDB commits on. */
+  async function settleWrites(): Promise<void> {
+    await whenPiiWritesSettled();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await whenPiiWritesSettled();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await whenPiiWritesSettled();
+  }
+
+  /** The migrated history entries as they now live, read from the vault. */
+  async function vaultHistoryEntries(): Promise<unknown[]> {
+    const raw = await createPiiStore(HISTORY_VAULT_KEY, vaultOptions()).read();
+    if (raw === null) return [];
+    const parsed = JSON.parse(raw) as { state?: { entries?: unknown } };
+    return Array.isArray(parsed.state?.entries) ? parsed.state.entries : [];
+  }
+
+  /**
+   * Make the Nth vault write FAIL, at the storage layer.
+   *
+   * The plaintext `localStorage` write is gone, so an interrupted startup can
+   * only be modelled at the VAULT write — which is where the migration's
+   * durability check now runs. Failing inside the IndexedDB double means the
+   * rejection travels through the real gate (`commit_failed`), so the gate's
+   * write barrier observes it exactly as it would in production.
+   */
+  function installVaultFailureOnNthWrite(failOn: number | null): {
+    writes: number;
+  } {
+    vaultIdb.failPutsOnCall(failOn);
+    return {
+      get writes() {
+        return vaultIdb.putCalls();
+      },
+    };
+  }
+
   beforeEach(() => {
+    vaultIdb = createFakeIndexedDb();
+    setPiiStoreEnvironment(PII_STORE_ENVIRONMENT);
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    configurePiiStoreRuntime(vaultOptions());
+    zeroizeSessionPassphrase();
+
     vi.clearAllMocks();
     storageValues.clear();
     storageGetItem.mockImplementation(
@@ -202,7 +296,25 @@ describe("useAppInit tutorial auto-start", () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    zeroizeSessionPassphrase();
   });
+
+  /**
+   * Let the fire-and-forget migration settle.
+   *
+   * `migrateLegacyData()` runs in an effect and must not block render, so the
+   * legacy path (no vault) resolves over microtasks. Draining the queue is what
+   * a spec awaits before asserting what the migration did.
+   */
+  async function flushMigration(): Promise<void> {
+    await whenPiiWritesSettled();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  }
 
   it.each(["guided", "bento"] as const)(
     "does not auto-start the tutorial in %s layout",
@@ -326,7 +438,7 @@ describe("useAppInit tutorial auto-start", () => {
     expect(useHistoryStore.getState().entries).toEqual([]);
   });
 
-  it("migrates literal legacy products without removing the source before verifying the entries", () => {
+  it("migrates literal legacy products without removing the source before verifying the entries", async () => {
     const result = {
       totalCost: 12.5,
       sellPrice: 25,
@@ -387,6 +499,8 @@ describe("useAppInit tutorial auto-start", () => {
     });
 
     renderHook(() => useAppInit(vi.fn()));
+    // The migration is fire-and-forget so it cannot block render.
+    await flushMigration();
 
     const migrated = useHistoryStore.getState().entries;
     expect(migrated).toHaveLength(1);
@@ -395,6 +509,7 @@ describe("useAppInit tutorial auto-start", () => {
     expect(storageValues.has("open3dcalc_products")).toBe(false);
 
     renderHook(() => useAppInit(vi.fn()));
+    await flushMigration();
     expect(useHistoryStore.getState().entries).toEqual(migrated);
   });
 
@@ -411,7 +526,7 @@ describe("useAppInit tutorial auto-start", () => {
     expect(storageRemoveItem).not.toHaveBeenCalledWith("open3dcalc_products");
   });
 
-  it("retains and verifies legacy history in its destination key without deleting it", () => {
+  it("retains and verifies legacy history in its destination without deleting the legacy key", async () => {
     const result = {
       totalCost: 18,
       sellPrice: 36,
@@ -439,24 +554,26 @@ describe("useAppInit tutorial auto-start", () => {
       carbonFootprintGrams: 4,
     };
     const snapshot = { type: "fdm" as const, summary: "PETG café" };
-    storageValues.set(
-      "open3dcalc_history_v2",
-      JSON.stringify([
-        {
-          id: "legacy-history-9",
-          timestamp: 1_700_000_000_009,
-          type: "fdm",
-          summary: "PETG café",
-          totalCost: 18,
-          sellPrice: 36,
-          profit: 18,
-          result,
-          snapshot,
-        },
-      ]),
-    );
+    // The legacy key is compatibility INPUT, and copy-and-never-delete keeps it.
+    const legacySource = JSON.stringify([
+      {
+        id: "legacy-history-9",
+        timestamp: 1_700_000_000_009,
+        type: "fdm",
+        summary: "PETG café",
+        totalCost: 18,
+        sellPrice: 36,
+        profit: 18,
+        result,
+        snapshot,
+      },
+    ]);
+    storageValues.set("open3dcalc_history_v2", legacySource);
 
+    await unlockVault();
     renderHook(() => useAppInit(vi.fn()));
+    await flushMigration();
+    await settleWrites();
 
     const migrated = useHistoryStore.getState().entries;
     expect(migrated).toHaveLength(1);
@@ -472,16 +589,20 @@ describe("useAppInit tutorial auto-start", () => {
       result,
       snapshot,
     });
-    expect(storageValues.has("open3dcalc_history_v2")).toBe(true);
-    expect(
-      JSON.parse(storageValues.get("open3dcalc_history_v2")!).state.entries,
-    ).toEqual(migrated);
 
+    // The migrated history now lives in the VAULT, not in localStorage.
+    await expect(vaultHistoryEntries()).resolves.toEqual(migrated);
+    // And the legacy key is retained read-only, never deleted.
+    expect(storageValues.get("open3dcalc_history_v2")).toBe(legacySource);
+
+    // Idempotent on a second startup.
     renderHook(() => useAppInit(vi.fn()));
+    await flushMigration();
+    await settleWrites();
     expect(useHistoryStore.getState().entries).toEqual(migrated);
   });
 
-  it("recovers the complete legacy history after the second persistence write fails", () => {
+  it("recovers the complete legacy history after the second persistence write fails", async () => {
     const historyKey = "open3dcalc_history_v2";
     const recoveryKey = "open3dcalc_migration_done_v2";
     const resultOne = {
@@ -585,70 +706,70 @@ describe("useAppInit tutorial auto-start", () => {
     };
     const expectedEntries = [expectedTwo, expectedOne];
     const originalSource = JSON.stringify(legacyHistory);
+    // The legacy key is compatibility INPUT, retained read-only. It is never
+    // written by the migration.
     storageValues.set(historyKey, originalSource);
     expect(storageValues.get(historyKey)).toBe(originalSource);
     expect(storageValues.has(recoveryKey)).toBe(false);
 
-    let historyWriteCount = 0;
-    storageSetItem.mockClear();
-    storageSetItem.mockImplementation((key: string, value: string) => {
-      if (key === historyKey) {
-        historyWriteCount += 1;
-        if (historyWriteCount === 2) {
-          throw new Error("simulated second history persistence failure");
-        }
-      }
-      storageValues.set(key, value);
-    });
+    // A capable, unlocked vault: the migration's destination.
+    await unlockVault();
+    // Fail the SECOND vault write the migration issues (the second addEntry).
+    const counter = installVaultFailureOnNthWrite(2);
 
     renderHook(() => useAppInit(vi.fn()));
 
-    const failedSource = storageValues.get(historyKey);
-    expect(historyWriteCount).toBe(2);
-    expect(failedSource).toBeDefined();
-    const persistedPrefix = JSON.parse(failedSource!) as {
-      state: { entries: Array<Record<string, unknown>> };
-    };
-    expect(persistedPrefix.state.entries).toHaveLength(1);
-    expect(persistedPrefix.state.entries[0]).toEqual(expectedOne);
-    expect(JSON.parse(storageValues.get(recoveryKey)!)).toEqual({
+    // The interruption happened: two writes were attempted, the second failed.
+    await vi.waitFor(() => expect(counter.writes).toBe(2));
+    await settleWrites();
+
+    // The durable recovery marker SURVIVED, carrying the original source so the
+    // next startup can resume, and the legacy input was not deleted or rewritten.
+    expect(storageValues.has(recoveryKey)).toBe(true);
+    expect(JSON.parse(storageValues.get(recoveryKey)!)).toMatchObject({
       type: "open3dcalc-history-v2-backup",
       source: originalSource,
       baseEntries: [],
     });
-    const failureBackup = storageValues.get(recoveryKey);
-    expect(storageValues.get(historyKey)).toBe(failedSource);
+    expect(storageValues.get(historyKey)).toBe(originalSource);
     expect(storageRemoveItem).not.toHaveBeenCalledWith(recoveryKey);
-    expect(failedSource).not.toBe(originalSource);
+    // NO plaintext PII write: the legacy history key was never written.
+    expect(storageSetItem).not.toHaveBeenCalledWith(
+      historyKey,
+      expect.anything(),
+    );
 
-    // Rehydrate the prefix as a fresh app process would, retaining exactly the
-    // same localStorage values captured after the interrupted startup.
-    useHistoryStore.setState({
-      entries: persistedPrefix.state.entries as unknown as HistoryEntry[],
-    });
-    storageValues.set(historyKey, failedSource!);
-    storageSetItem.mockImplementation((key: string, value: string) => {
-      storageValues.set(key, value);
-    });
+    // The vault holds the prefix that committed before the failure: exactly one
+    // entry, the first one migrated.
+    const prefix = await vaultHistoryEntries();
+    expect(prefix).toHaveLength(1);
+    expect(prefix[0]).toEqual(expectedOne);
 
-    let backupRemovedAfterVerification = false;
+    // Simulate a fresh app process resuming from the durable marker. Timers are
+    // already real (unlockVault switched them); the next write succeeds.
+    storageSetItem.mockClear();
+    useHistoryStore.setState({ entries: prefix as unknown as HistoryEntry[] });
+    const resumeStorage = installVaultFailureOnNthWrite(
+      Number.POSITIVE_INFINITY,
+    );
+
+    let markerRemovedAfterVerification = false;
     storageRemoveItem.mockImplementation((key: string) => {
       if (key === recoveryKey) {
-        const persisted = JSON.parse(storageValues.get(historyKey)!) as {
-          state: { entries: Array<Record<string, unknown>> };
-        };
-        backupRemovedAfterVerification =
-          storageValues.get(recoveryKey) === failureBackup &&
-          JSON.stringify(persisted.state.entries) ===
-            JSON.stringify(expectedEntries) &&
+        markerRemovedAfterVerification =
           JSON.stringify(useHistoryStore.getState().entries) ===
-            JSON.stringify(expectedEntries);
+          JSON.stringify(expectedEntries);
       }
       storageValues.delete(key);
     });
 
     renderHook(() => useAppInit(vi.fn()));
 
+    await vi.waitFor(() => expect(storageValues.has(recoveryKey)).toBe(false));
+    await settleWrites();
+    void resumeStorage;
+
+    // Every entry recovered, including the one written before the failure.
     const recovered = useHistoryStore.getState().entries;
     expect(recovered).toHaveLength(2);
     expect(new Set(recovered.map((entry) => entry.id)).size).toBe(2);
@@ -659,26 +780,38 @@ describe("useAppInit tutorial auto-start", () => {
     expect(recovered.find((entry) => entry.id === expectedTwo.id)).toEqual(
       expectedTwo,
     );
-    expect(JSON.parse(storageValues.get(historyKey)!).state.entries).toEqual(
-      expectedEntries,
-    );
-    expect(backupRemovedAfterVerification).toBe(true);
+    // The marker was cleared only AFTER the verification saw the full set.
+    expect(markerRemovedAfterVerification).toBe(true);
     expect(storageValues.has(recoveryKey)).toBe(false);
+    // The recovered entries are durable in the vault.
+    await expect(vaultHistoryEntries()).resolves.toEqual(expectedEntries);
+    // Still no plaintext PII write to the legacy history key.
+    expect(storageSetItem).not.toHaveBeenCalledWith(
+      historyKey,
+      expect.anything(),
+    );
 
-    const recoveredSource = storageValues.get(historyKey);
+    // Idempotent: a third startup neither duplicates nor re-writes.
     renderHook(() => useAppInit(vi.fn()));
+    await settleWrites();
     expect(useHistoryStore.getState().entries).toEqual(expectedEntries);
-    expect(storageValues.get(historyKey)).toBe(recoveredSource);
     expect(useHistoryStore.getState().entries).toHaveLength(2);
   });
 
-  it("migrates both supported legacy sources with all records and remains idempotent", () => {
+  it("migrates both supported legacy sources with all records and remains idempotent", async () => {
     const { productSource, historySource, expectedEntries } =
       createCombinedLegacyFixtures();
     storageValues.set("open3dcalc_products", productSource);
     storageValues.set("open3dcalc_history_v2", historySource);
 
+    await unlockVault();
     renderHook(() => useAppInit(vi.fn()));
+    // The migration is fire-and-forget and awaits the vault write before it
+    // clears the marker and drops the product source, so wait for that outcome
+    // rather than for a fixed number of ticks.
+    await vi.waitFor(() =>
+      expect(storageValues.has("open3dcalc_products")).toBe(false),
+    );
 
     const migrated = useHistoryStore.getState().entries;
     expect(migrated).toHaveLength(3);
@@ -692,21 +825,24 @@ describe("useAppInit tutorial auto-start", () => {
     expect(migrated[0].snapshot).toEqual(expectedEntries[0].snapshot);
     expect(migrated[1].result).toEqual(expectedEntries[1].result);
     expect(migrated[2].snapshot).toEqual(expectedEntries[2].snapshot);
+    // The independent legacy PRODUCT source is removed once migration verifies;
+    // the history source is input and copy-and-never-delete retains it.
     expect(storageValues.has("open3dcalc_products")).toBe(false);
     expect(storageValues.has("open3dcalc_migration_done_v2")).toBe(false);
-    expect(
-      JSON.parse(storageValues.get("open3dcalc_history_v2")!).state.entries,
-    ).toEqual(expectedEntries);
+    expect(storageValues.get("open3dcalc_history_v2")).toBe(historySource);
 
-    const persistedAfterMigration = storageValues.get("open3dcalc_history_v2");
+    // The migrated records now live in the VAULT.
+    await expect(vaultHistoryEntries()).resolves.toEqual(expectedEntries);
+
+    // Idempotent: a second startup neither duplicates nor re-writes.
+    const vaultAfterMigration = await vaultHistoryEntries();
     renderHook(() => useAppInit(vi.fn()));
+    await settleWrites();
     expect(useHistoryStore.getState().entries).toEqual(expectedEntries);
-    expect(storageValues.get("open3dcalc_history_v2")).toBe(
-      persistedAfterMigration,
-    );
+    await expect(vaultHistoryEntries()).resolves.toEqual(vaultAfterMigration);
   });
 
-  it("recovers both original sources after a durable product write and partial history write", () => {
+  it("recovers both original sources after a durable product write and partial history write", async () => {
     const historyKey = "open3dcalc_history_v2";
     const productKey = "open3dcalc_products";
     const recoveryKey = "open3dcalc_migration_done_v2";
@@ -715,101 +851,94 @@ describe("useAppInit tutorial auto-start", () => {
     storageValues.set(productKey, productSource);
     storageValues.set(historyKey, historySource);
 
-    let historyWriteCount = 0;
-    storageSetItem.mockClear();
-    storageSetItem.mockImplementation((key: string, value: string) => {
-      if (key === historyKey) {
-        historyWriteCount += 1;
-        if (historyWriteCount === 3) {
-          throw new Error(
-            "simulated interruption during legacy history import",
-          );
-        }
-      }
-      storageValues.set(key, value);
-    });
+    await unlockVault();
+    // Fail the THIRD vault write issued by the migration. The combined import
+    // writes the history entries first and the converted product after; the
+    // third is the product, so the interruption lands after a durable prefix.
+    const counter = installVaultFailureOnNthWrite(3);
 
     renderHook(() => useAppInit(vi.fn()));
 
-    expect(historyWriteCount).toBe(3);
-    const interruptedHistory = storageValues.get(historyKey)!;
-    expect(JSON.parse(interruptedHistory).state.entries).toEqual(
-      expectedEntries.slice(1),
-    );
-    expect(storageValues.get(productKey)).toBe(productSource);
+    await vi.waitFor(() => expect(counter.writes).toBe(3));
+    await settleWrites();
+
+    // The durable recovery marker SURVIVED with both original sources, so the
+    // next startup can resume, and neither plaintext source was removed.
+    expect(storageValues.has(recoveryKey)).toBe(true);
     expect(JSON.parse(storageValues.get(recoveryKey)!)).toEqual({
       type: "open3dcalc-history-v2-backup",
       source: historySource,
       baseEntries: [],
       productsSource: productSource,
     });
+    expect(storageValues.get(productKey)).toBe(productSource);
+    expect(storageValues.get(historyKey)).toBe(historySource);
     expect(storageRemoveItem).not.toHaveBeenCalledWith(productKey);
     expect(storageRemoveItem).not.toHaveBeenCalledWith(recoveryKey);
 
-    // Use the exact persisted map from the interrupted startup as the next
-    // process's localStorage; only rehydrate the Zustand store from that map.
-    const interruptedStorage = new Map(storageValues);
-    const persistedPrefix = JSON.parse(interruptedStorage.get(historyKey)!) as {
-      state: { entries: HistoryEntry[] };
-    };
-    useHistoryStore.setState({ entries: persistedPrefix.state.entries });
-    storageGetItem.mockImplementation(
-      (key: string) => interruptedStorage.get(key) ?? null,
-    );
-    storageSetItem.mockImplementation((key: string, value: string) => {
-      interruptedStorage.set(key, value);
-    });
+    // The vault holds the prefix that committed before the failure: the
+    // converted product and the first history entry, in migration order. The
+    // third write (the second history entry) never landed.
+    const prefix = await vaultHistoryEntries();
+    expect(prefix).toHaveLength(2);
+    expect((prefix as Array<{ id: string }>).map((entry) => entry.id)).toEqual([
+      "legacy-history-compat-01",
+      "legacy-product-compat-01",
+    ]);
+    // The in-memory store holds the full converted set even though the last
+    // write failed; the marker is what guarantees it gets re-persisted.
+    expect(useHistoryStore.getState().entries).toHaveLength(3);
+
+    // Fresh process resuming from the marker. Writes succeed this time.
+    useHistoryStore.setState({ entries: prefix as unknown as HistoryEntry[] });
+    storageSetItem.mockClear();
+    installVaultFailureOnNthWrite(null);
+
     let sourcesRemovedAfterVerification = false;
     storageRemoveItem.mockImplementation((key: string) => {
       if (key === productKey) {
-        const persisted = JSON.parse(interruptedStorage.get(historyKey)!) as {
-          state: { entries: HistoryEntry[] };
-        };
-        const recovery = JSON.parse(interruptedStorage.get(recoveryKey)!) as {
-          source: string;
-          productsSource: string;
-        };
-        const entriesMatch =
-          persisted.state.entries.length === expectedEntries.length &&
-          expectedEntries.every((expected, index) =>
-            Object.entries(expected).every(
-              ([field, value]) =>
-                JSON.stringify(
-                  (
-                    persisted.state.entries[index] as unknown as Record<
-                      string,
-                      unknown
-                    >
-                  )[field],
-                ) === JSON.stringify(value),
-            ),
-          );
+        // The product source is dropped only after the full migrated set is in
+        // the store, verified by id SET (order is not what durability means).
+        const inStore = useHistoryStore.getState().entries;
         sourcesRemovedAfterVerification =
-          entriesMatch &&
-          recovery.source === historySource &&
-          recovery.productsSource === productSource &&
-          interruptedStorage.get(productKey) === productSource;
+          inStore.length === expectedEntries.length &&
+          new Set(inStore.map((entry) => entry.id)).size ===
+            expectedEntries.length &&
+          expectedEntries.every((expected) =>
+            inStore.some((entry) => entry.id === expected.id),
+          ) &&
+          // ...and the durable marker is still retained at this point, so a
+          // crash between the two removals is still recoverable.
+          storageValues.has(recoveryKey);
       }
-      interruptedStorage.delete(key);
+      storageValues.delete(key);
     });
 
     renderHook(() => useAppInit(vi.fn()));
+
+    await vi.waitFor(() => expect(storageValues.has(productKey)).toBe(false));
+    await settleWrites();
 
     const recovered = useHistoryStore.getState().entries;
     expect(recovered).toHaveLength(3);
     expect(new Set(recovered.map((entry) => entry.id)).size).toBe(3);
     expect(recovered).toEqual(expectedEntries);
+    // Both sources were dropped only after the full set was verified durable.
     expect(storageRemoveItem).toHaveBeenCalledWith(productKey);
-    expect(interruptedStorage.get(productKey)).toBeUndefined();
-    expect(interruptedStorage.get(recoveryKey)).toBeUndefined();
+    expect(storageValues.get(productKey)).toBeUndefined();
+    expect(storageValues.has(recoveryKey)).toBe(false);
     expect(sourcesRemovedAfterVerification).toBe(true);
-    expect(
-      JSON.parse(interruptedStorage.get(historyKey)!).state.entries,
-    ).toEqual(expectedEntries);
+    // The recovered set is durable in the vault.
+    await expect(vaultHistoryEntries()).resolves.toEqual(expectedEntries);
+    // No plaintext PII write: the legacy history key was never written.
+    expect(storageSetItem).not.toHaveBeenCalledWith(
+      historyKey,
+      expect.anything(),
+    );
 
-    const persistedAfterRecovery = interruptedStorage.get(historyKey);
+    // Idempotent on a third startup.
     renderHook(() => useAppInit(vi.fn()));
+    await settleWrites();
     expect(useHistoryStore.getState().entries).toEqual(expectedEntries);
-    expect(interruptedStorage.get(historyKey)).toBe(persistedAfterRecovery);
   });
 });

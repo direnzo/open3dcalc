@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { manifestStorage } from "@/shared/lib/manifestStorage";
+import {
+  gatedPiiPersistStorage,
+  registerPiiPersistStore,
+} from "@/shared/lib/crypto/piiStoreHydration";
 import type { HistoryEntry } from "@/shared/types";
 
 interface HistoryStore {
@@ -237,7 +240,13 @@ export const useHistoryStore = create<HistoryStore>()(
     {
       name: "open3dcalc_history_v2",
       version: 2,
-      storage: manifestStorage(),
+      storage: gatedPiiPersistStorage<HistoryStore>("open3dcalc_history_v2"),
+      // See customerStore: hydration waits for `rehydratePiiStores()` after
+      // unlock, so a locked store never persists its initial state over the
+      // user's real history.
+      skipHydration: true,
     },
   ),
 );
+
+registerPiiPersistStore("open3dcalc_history_v2", useHistoryStore.persist);

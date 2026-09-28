@@ -3,6 +3,11 @@ import { isPersistableCalculationState } from "@/shared/lib/calculationState";
 import { restoreAutoSnapshot } from "@/shared/stores/storeBridge";
 import { persistCalculatorSettings } from "@/shared/stores/calculatorStore.helpers";
 import { guardedStorage } from "@/shared/lib/manifestStorage";
+import {
+  didPiiWritesCommit,
+  getPiiStoreHydrationStatus,
+  readPiiPersistedRecord,
+} from "@/shared/lib/crypto/piiStoreHydration";
 import { useHistoryStore } from "@/shared/stores/historyStore";
 import { useCalculatorStore } from "@/shared/stores/calculatorStore";
 import { computeValidatedStoreResults } from "@/shared/stores/calculatorStore.validation";
@@ -106,13 +111,13 @@ function isHistoryMigrationBackup(
   return null;
 }
 
-function migrateLegacyHistory(
+async function migrateLegacyHistory(
   legacyItems: unknown[],
   source: string,
   backup?: HistoryMigrationBackup,
   legacyProducts?: unknown[],
   restoreBaseEntries = false,
-): boolean {
+): Promise<boolean> {
   const historyStore = useHistoryStore.getState();
   const baseEntries = backup?.baseEntries ?? historyStore.entries;
   const historyEntries = legacyItems.map((item) => {
@@ -220,21 +225,57 @@ function migrateLegacyHistory(
   };
 
   const inMemoryEntries = useHistoryStore.getState().entries;
-  const persistedSource = guardedStorage.getItem(HISTORY_KEY);
-  if (!persistedSource) return false;
-  try {
-    const persisted = JSON.parse(persistedSource) as {
-      state?: { entries?: unknown };
-    };
-    if (
-      !Array.isArray(persisted.state?.entries) ||
-      !verified(inMemoryEntries) ||
-      !verified(persisted.state.entries)
-    ) {
+  if (!verified(inMemoryEntries)) return false;
+
+  // Verify against the LIVE destination.
+  //
+  // After Wave 3 the history store persists through the encrypted vault, so the
+  // migration must confirm the vault holds what it just wrote before it removes
+  // the durable recovery marker. The write is asynchronous, so this awaits the
+  // gate's write barrier first, then reads the sealed record back.
+  //
+  // The legacy localStorage key is read ONLY as compatibility INPUT: copy-and-
+  // never-delete retains it, and it must not disagree with memory when present.
+  // It is no longer written, so it is never the destination being verified.
+  if (getPiiStoreHydrationStatus(HISTORY_KEY) === "hydrated") {
+    // The vault is the live destination. Require every write the store issued
+    // to have COMMITTED, and then read the sealed record back and confirm it
+    // holds the full migrated set. A rejected write (the interrupted case) or a
+    // record that does not match leaves the recovery marker in place so the
+    // next startup can resume.
+    if (!(await didPiiWritesCommit())) return false;
+    const vaultRecord = await readPiiPersistedRecord(HISTORY_KEY);
+    if (vaultRecord === null) return false;
+    try {
+      const persisted = JSON.parse(vaultRecord) as {
+        state?: { entries?: unknown };
+      };
+      if (
+        !Array.isArray(persisted.state?.entries) ||
+        !verified(persisted.state.entries)
+      ) {
+        return false;
+      }
+    } catch {
       return false;
     }
-  } catch {
-    return false;
+  } else {
+    const persistedSource = guardedStorage.getItem(HISTORY_KEY);
+    if (persistedSource !== null) {
+      try {
+        const persisted = JSON.parse(persistedSource) as {
+          state?: { entries?: unknown };
+        };
+        if (
+          !Array.isArray(persisted.state?.entries) ||
+          !verified(persisted.state.entries)
+        ) {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    }
   }
 
   if (backup?.productsSource !== undefined && productsFullyConvertible) {
@@ -252,6 +293,12 @@ function migrateLegacyHistory(
 }
 
 function migrateLegacyData(): void {
+  void migrateLegacyDataAsync().catch((error: unknown) => {
+    console.warn("[useAppInit] Legacy migration failed:", error);
+  });
+}
+
+async function migrateLegacyDataAsync(): Promise<void> {
   const migrationMarker = guardedStorage.getItem(MIGRATION_MARKER_KEY);
   if (migrationMarker) {
     const backup = isHistoryMigrationBackup(migrationMarker);
@@ -269,7 +316,7 @@ function migrateLegacyData(): void {
             // the independently backed-up legacy history.
           }
         }
-        migrateLegacyHistory(
+        await migrateLegacyHistory(
           parsed,
           backup.source,
           backup,
@@ -316,7 +363,7 @@ function migrateLegacyData(): void {
             // The product source is preserved; continue recovering history.
           }
         }
-        migrateLegacyHistory(
+        await migrateLegacyHistory(
           parsedHistory,
           oldHistory,
           recovery,
@@ -330,6 +377,12 @@ function migrateLegacyData(): void {
     }
   }
 
+  // Verify the migrated entries against the store. This is the in-memory half:
+  // the durable-destination verification for the combined path lives in
+  // `migrateLegacyHistory`, which awaits the vault before it clears the recovery
+  // marker. The product branch below removes only the independent PRODUCT
+  // source, which is a different key from the destination, so confirming the
+  // history store holds the converted records is what its safety requires.
   const migrateAndVerify = (
     entries: Array<{
       id?: string;

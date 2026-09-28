@@ -87,13 +87,22 @@ describe("resolveKeyPolicy (manifest as source of truth)", () => {
   it("classifies PII, non-PII and unknown keys from the fixture", () => {
     const pii = resolveKeyPolicy(PII_KEY);
     expect(pii.allowed).toBe(true);
-    expect(pii.entry?.pii).toBe(true);
+    if (!pii.allowed) throw new Error("expected the PII key to be allowed");
+    expect(pii.entry.pii).toBe(true);
 
     const nonPii = resolveKeyPolicy(NON_PII_KEY);
     expect(nonPii.allowed).toBe(true);
-    expect(nonPii.entry?.pii).toBe(false);
+    if (!nonPii.allowed)
+      throw new Error("expected the non-PII key to be allowed");
+    expect(nonPii.entry.pii).toBe(false);
 
-    expect(resolveKeyPolicy(UNKNOWN_KEY).allowed).toBe(false);
+    const unknown = resolveKeyPolicy(UNKNOWN_KEY);
+    expect(unknown.allowed).toBe(false);
+    if (unknown.allowed)
+      throw new Error("expected an unknown key to be refused");
+    // The refusal reason is per-key default-deny, NOT a manifest failure — the
+    // two are distinct facts and a caller must be able to tell them apart.
+    expect(unknown.reason).toBe("unknown_key");
   });
 });
 

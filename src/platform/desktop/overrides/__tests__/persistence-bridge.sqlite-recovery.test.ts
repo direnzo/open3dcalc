@@ -227,21 +227,64 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     expect(sqlite.$client.pragma("foreign_key_check")).toEqual([]);
   });
 
-  it("hydrates atomically when a SQLite read fails", async () => {
+  it("isolates a per-key read failure, and still rejects on a structural failure", async () => {
+    // CONTRACT CHANGE. This test used to require that one `db:load` failure
+    // rejected `initPersistenceBridge()` — all-or-nothing hydration. That took
+    // the whole profile down on ONE unreadable row: the bridge never registered
+    // its auto-save interval or its `beforeunload` handler, and the app could
+    // not start. The per-key isolation in `loadFromDatabase` is the fix for
+    // that bricked-startup regression, so the old guarantee is genuinely gone.
+    //
+    // The contract now: a per-key `db.load` failure does NOT reject
+    // `initPersistenceBridge()`; the key is quarantined and reported while
+    // every readable key hydrates, and only a structural failure — `listKeys`,
+    // or the manifest failing — still rejects startup, because then there is no
+    // key set to isolate and hydrating from stale localStorage would look like
+    // success and then lose every write.
     failureArmed = false;
     await initPersistenceBridge();
     const sourcePreimage = localStorageSnapshot();
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     setItem.mockClear();
+
+    const reported: Array<{
+      unavailable: Array<{ key: string; reason: string }>;
+    }> = [];
+    const listener = (event: Event): void => {
+      reported.push(
+        (event as CustomEvent).detail as {
+          unavailable: Array<{ key: string; reason: string }>;
+        },
+      );
+    };
+    window.addEventListener("open3dcalc:pii-unavailable", listener);
+
     vi.spyOn(dbApi, "load").mockRejectedValue(
       new Error("synthetic hydration read failure"),
     );
 
-    await expect(initPersistenceBridge()).rejects.toThrow(
-      "synthetic hydration read failure",
-    );
+    await expect(initPersistenceBridge()).resolves.toBeUndefined();
+
+    // Fail-closed and non-partial: an unreadable value is never written into
+    // localStorage (and never as raw ciphertext), so the source is untouched.
     expect(localStorageSnapshot()).toEqual(sourcePreimage);
     expect(setItem).not.toHaveBeenCalled();
+
+    // …but the refusal is ANNOUNCED per key, not swallowed: the user can be
+    // told which class is missing instead of seeing empty state as data loss.
+    expect(reported.length).toBeGreaterThan(0);
+    const unavailable = reported.flatMap((detail) => detail.unavailable);
+    expect(unavailable.map((u) => u.key)).toContain(FIRST_BRIDGE_KEY);
+    expect(unavailable.every((u) => u.reason.length > 0)).toBe(true);
+
+    window.removeEventListener("open3dcalc:pii-unavailable", listener);
+
+    // A STRUCTURAL failure is still terminal — the isolation is not a blanket
+    // catch. There is no key set to isolate, so startup must refuse.
+    vi.spyOn(dbApi, "listKeys").mockRejectedValue(
+      new Error("SQLITE_CANTOPEN: unable to open database file"),
+    );
+    await expect(initPersistenceBridge()).rejects.toThrow();
   });
 
   it("flushes on close and periodically, prunes stale keys, and reports DB errors", async () => {

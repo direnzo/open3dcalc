@@ -124,7 +124,13 @@ export type UnreadableReason =
   /** The session was locked, so no passphrase-derived value can be read. */
   | "locked"
   /** The key is not in the SPEC-01 manifest (default-deny). */
-  | "unknown_key";
+  | "unknown_key"
+  /**
+   * The manifest itself could not be loaded, so NO key could be classified.
+   * Distinct from `unknown_key`: this is not a statement about this key, and a
+   * caller must not read it as "unknown, therefore safe to pass through".
+   */
+  | "manifest_unavailable";
 
 export interface UnavailableKey {
   key: string;
@@ -440,6 +446,12 @@ const RECOVERABLE_REASONS = new Set<UnreadableReason>([
  * read this" and "this is empty" must never render the same, and a store
  * hydrated with an empty value would then overwrite the very row it could not
  * read.
+ *
+ * A key that cannot be POSITIVELY classified (not declared, or the manifest
+ * could not be loaded at all) is quarantined the same way: it is absent from
+ * `values` and present in `unavailable` with `unknown_key` /
+ * `manifest_unavailable`. No stored value is ever emitted without a successful
+ * classification — a failed classification is not evidence of a benign key.
  */
 export async function hydrateAll(
   db: MinimalStorageDb,
@@ -453,9 +465,23 @@ export async function hydrateAll(
 
   for (const row of rows) {
     const policy = resolveKeyPolicy(row.key);
-    if (!policy.allowed || !policy.entry?.pii) {
-      // Non-PII and unknown keys are the sweep's business, not the crypto
-      // layer's, and are passed through untouched.
+    if (!policy.allowed) {
+      // Cannot positively classify ⇒ fail closed. This covers BOTH "not
+      // declared" and "the manifest could not be loaded"; neither may emit a
+      // stored value, and the two carry distinct reasons so the caller can
+      // tell a per-key default-deny from a whole-manifest failure. Passing an
+      // unclassifiable key through here is the fail-open that handed a stored
+      // ciphertext back as the hydrated value on an unloadable manifest.
+      unavailable.push({
+        key: row.key,
+        reason: policy.reason,
+        recoverable: false,
+      });
+      continue;
+    }
+    if (!policy.entry.pii) {
+      // Positively classified non-PII: plaintext passthrough is the manifest's
+      // own policy, not a guess.
       values.set(row.key, row.value);
       continue;
     }

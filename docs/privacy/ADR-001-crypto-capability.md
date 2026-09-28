@@ -381,9 +381,11 @@ separate, versioned work — a new envelope version, a read path that derives wi
 declared factor rather than the compiled-in one, and a migration that re-encrypts
 existing bundles. It is **out of scope here and still open.**
 
-### 3.6 Version migration obligation — 1.1 envelopes now fail closed
+### 3.6 Version migration obligation — legacy envelopes fail closed and are recovered
 
-**Status: NOT IMPLEMENTED. This is not a W1 deliverable.**
+**Status: IMPLEMENTED — see `electron/legacyRecovery.ts`.** The §3.6 recovery is the
+`recoverLegacyKey` path exposed over `privacy:recover-key`, with per-key hydration
+isolation in `hydrateAll` and the report behind `privacy:recovery-report`.
 
 Bumping the envelope version is a data-affecting change, not a code-only one, and the
 affected data is real: packaged Electron builds have run against real profiles, so a
@@ -411,33 +413,47 @@ unaffected by this change. A browser profile therefore cannot contain an
 
 **What happens to an affected row now.** The versioned reader recognises `1.1` and
 refuses it with `legacy_self_asserted_aad`. That is fail-closed by design — the `1.1`
-AAD cannot be re-authenticated under §3.1 — but the operational consequence is that
-those values are currently unreadable by the app.
+AAD cannot be re-authenticated under §3.1 — so the value is unreadable on the
+ordinary read path until §3.6 recovery re-seals it.
 
 **Recovery: copy-and-verify, never delete.**
 
 1. Read the `1.1` value **through a `1.1`-capable reader that still honours its own
-   self-asserted AAD**, holding the result only in memory. That reader must be
-   quarantined to this migration and must not become the general read path — the
-   defect this ADR remediates is precisely that self-assertion.
+   self-asserted AAD**, holding the result only in memory. That reader is quarantined
+   to this migration and is NOT the general read path — the defect this ADR
+   remediates is precisely that self-assertion. `readLegacyValue` in
+   `electron/legacyRecovery.ts` is that reader, and it refuses every shape other than
+   `enc1:envelope:` `v: "1.1"` and `enc1:safeStorage:`.
 2. Re-encrypt that plaintext under `2.0` using the caller-trusted expectation for its
    key, purpose, `S` and `F`.
-3. **Verify** the `2.0` envelope decrypts back to the same plaintext, then write it
-   alongside.
-4. Only after verification may the `1.1` blob be removed — and the copy-then-verify
-   order is not negotiable: overwriting or deleting a `1.1` blob in place destroys the
-   only copy of a value that may not be recoverable from any other source, since the
-   passphrase fallback means it was never replicated anywhere else.
+3. **Verify** the `2.0` envelope decrypts back to the same plaintext through a FRESH
+   authenticated read-back of the full payload, then write it alongside.
+4. The legacy copy is **RETAINED, not removed.** `recoverLegacyKey` copies the legacy
+   ciphertext byte for byte into the `legacy_residue` table (migration
+   `0005_legacy_residue.sql`) BEFORE it rewrites the `storage` row, and it never
+   deletes it. The copy-then-verify order is still not negotiable: overwriting or
+   deleting a `1.1` blob in place destroys the only copy of a value that may not be
+   recoverable from any other source, since the passphrase fallback never replicated
+   it. Deleting is additionally unsafe because no mechanism can prove an old client is
+   not still writing that row, so the user removes the residue through the erasure
+   flow.
 
 This matches the approved mode in which legacy sources are retained as **disclosed
-residue** rather than silently purged; the migration must report what it moved and
-what it left behind. A value that cannot be decrypted (wrong or absent passphrase,
-corrupt `1.1` blob) must be surfaced to the user as unrecoverable, not dropped.
+residue** rather than silently purged; the migration reports what it moved and what
+it left behind. The retained blob is itself declared PII-bearing (`legacy_residue`,
+`policy_version` 1.8) and covered by `PII_ERASURE_TABLES`, so the SPEC-02 erasure flow
+removes it. A value that cannot be decrypted (wrong or absent passphrase, corrupt
+`1.1` blob) is surfaced to the user as unrecoverable, not dropped.
 
-**Not implemented.** The contract remediation changes only the reader. No migration
-code, no quarantine reader, no telemetry and no UI exist. Any window in which a `1.1`
-value is unreadable is therefore still open, and this section is the tracking
-obligation for it — not a description of shipped behaviour.
+**Loading is per-key, and a refusal is named.** A profile can hold both legacy shapes
+at once. `hydrateAll` classifies each key independently: a key whose value is refused
+is ABSENT from the hydrated map and reported in `unavailable` with a reason (and
+whether §3.6 recovery is still possible), while every other key loads. The former
+all-or-nothing behaviour — one refused row rejecting the whole hydration — is gone.
+A refusal that crosses `ipcRenderer.invoke` arrives as a flattened string, so the
+reason is interpolated into the rejection MESSAGE (`UnreadablePiiValueError`) and the
+renderer parses that exact code back out (`persistence-bridge.refusalCodeFromError`);
+the structured `reason`/`code` fields do not survive the boundary.
 
 **The same obligation now also covers pre-remediation `enc1:safeStorage:` blobs, and they
 fail closed in the same shape.** The §3.4 remediation replaced the primary path's format, so
@@ -448,11 +464,13 @@ decrypting it. That is the right crypto call: reading it would re-admit exactly 
 unbound branch this layer no longer has, and would hand back a value that proves nothing
 about where it came from. The operational cost is the one above, and it is identical:
 
-- **A profile with existing `enc1:safeStorage:` PII rows now fails closed on load.** The
-  refusal propagates as a throw, so hydration of the affected key aborts rather than
-  degrading — the same **whole-hydration-rejection** shape Themis flagged for `1.1`
-  envelopes, now on the primary path's historical data. It is not scoped to the one value,
-  and it is not confined to the passphrase fallback.
+- **A profile with existing `enc1:safeStorage:` PII rows now fails closed on load, per
+  key.** The refusal is isolated to the one value: the affected key is quarantined and
+  reported as `legacy_unbound_encryption` with recovery still available, and every other
+  key still hydrates. It is not confined to the passphrase fallback. (Before `9c935f8`
+  the refusal propagated as a throw and rejected the whole hydration — the same
+  **whole-hydration-rejection** shape Themis flagged for `1.1` envelopes; the per-key
+  isolation is what removed it.)
 - The bytes are **still on disk and still intact**. Nothing is deleted, and the plaintext is
   still recoverable by a keyring-capable reader that chooses to ignore the binding.
 - `LegacyUnboundBlobError` is a **distinct type** on purpose, for the ADR-002 routing:
@@ -460,15 +478,17 @@ about where it came from. The operational cost is the one above, and it is ident
   stored string back as the value — the customer's raw ciphertext rendered as if it were
   their name — and raising `CryptoDeniedError` would report it as `locked`, a different
   problem with a different fix.
-- **Recovery is not implemented.** The copy-and-verify obligation above applies here too:
-  a `1.1`-capable-style reader that unwraps the keyring blob in memory, re-seal under §3.1,
-  verify, then remove. No such reader ships. So the operational state is: an upgrading user
-  with historical `enc1:safeStorage:` PII sees that data become unreadable, and nothing in
-  the app recovers it yet.
+- **Recovery is implemented, and it retains the copy.** `recoverLegacyKey` unwraps the
+  keyring blob in memory, re-seals it under §3.1, verifies by a fresh authenticated
+  read-back of the full payload, and parks the legacy ciphertext byte for byte in
+  `legacy_residue` — it does not remove it. The user removes the disclosed residue through
+  the SPEC-02 erasure flow. The path is exposed over `privacy:recover-key`, so an upgrading
+  user with historical `enc1:safeStorage:` PII can re-seal it.
 
-**Net: no stored shape has been migrated by this work.** Both the `1.1` envelope and the
-pre-remediation keyring blob are refused and readable by nothing in the app. §3.6 remains
-the tracking obligation for both, and it is still open.
+**Net: both stored shapes are migratable, per key.** The `1.1` envelope and the
+pre-remediation keyring blob are refused on the ordinary read path, and both are recovered
+by `recoverLegacyKey`. The legacy blob is retained as disclosed residue in
+`legacy_residue` and removed only by the user's SPEC-02 erasure action.
 
 ## 4. Consequences
 
@@ -486,9 +506,11 @@ the tracking obligation for both, and it is still open.
 - **Migration:** existing plaintext PII does NOT silently become encrypted. It enters the
   quarantine regime of ADR-002 until migrated or eliminated by explicit user action.
   Existing `1.1` envelopes likewise fail closed and require the §3.3 re-encryption.
-  **Existing `enc1:safeStorage:` PII rows now also fail closed** (§3.6) and are refused by
-  name as `LegacyUnboundBlobError`; they are not decrypted, not re-sealed and not deleted,
-  and the §3.6 recovery obligation covers them and is unimplemented.
+  **Existing `enc1:safeStorage:` PII rows now also fail closed** on the ordinary read
+  path (§3.6) and are refused by name as `LegacyUnboundBlobError`; they are not
+  decrypted, not re-sealed and not deleted there. The §3.6 recovery
+  (`recoverLegacyKey`) can re-seal them under the bound envelope, retaining the legacy
+  copy as disclosed residue that the user removes via the erasure flow.
 - **Cost:** a caller that supplies a wrong `S` or `F` loses access to its own data. That is
   the intended failure mode, and it is why those two values belong to the storage
   contract rather than to a constant inside the crypto module.

@@ -19,6 +19,7 @@
 
 import {
   type ManifestEntry,
+  type ManifestIndex,
   isKnownKey,
   getEntry,
 } from "../src/shared/lib/dataManifest.js";
@@ -31,20 +32,45 @@ import {
   UnknownBlobError,
 } from "./cryptoCapability.js";
 
-export interface KeyPolicy {
-  allowed: boolean;
-  entry?: ManifestEntry;
-}
+/**
+ * The two DIFFERENT facts a refusal can represent. They are separate because
+ * they call for different handling:
+ *
+ *  - `unknown_key` — the manifest loaded and this key is not declared
+ *    (SPEC-01 default-deny). The classification is known.
+ *  - `manifest_unavailable` — the manifest itself could not be loaded, so NO
+ *    key can be classified. This is not a statement about the key at all, and
+ *    a caller that reads it as "unknown, therefore benign" fails open.
+ */
+export type PolicyRefusalReason = "unknown_key" | "manifest_unavailable";
 
-/** Manifest policy for a key (main-process index; fail-closed on load errors). */
+export type KeyPolicy =
+  | { allowed: true; entry: ManifestEntry }
+  | { allowed: false; reason: PolicyRefusalReason };
+
+/**
+ * Manifest policy for a key (main-process index; fail-closed on load errors).
+ *
+ * Fail-closed for BOTH refusal reasons, but the reasons are kept distinct so the
+ * caller can tell "this key is not declared" from "I could not read the
+ * manifest". Collapsing them is the defect this signature exists to prevent: an
+ * unloadable manifest made every key look unknown, and a caller that passes
+ * unknown keys through then emitted raw stored ciphertext as a value.
+ */
 export function resolveKeyPolicy(key: string): KeyPolicy {
+  let manifest: ManifestIndex;
   try {
-    const manifest = loadManifestFromDisk();
-    if (!isKnownKey(manifest, key)) return { allowed: false };
-    return { allowed: true, entry: getEntry(manifest, key) };
+    manifest = loadManifestFromDisk();
   } catch {
-    return { allowed: false };
+    return { allowed: false, reason: "manifest_unavailable" };
   }
+  if (!isKnownKey(manifest, key)) {
+    return { allowed: false, reason: "unknown_key" };
+  }
+  // `isKnownKey` is `manifest.has(key)`, so `getEntry` is defined here; the
+  // non-null assertion makes the invariant explicit rather than widening the
+  // allowed case back to an optional entry.
+  return { allowed: true, entry: getEntry(manifest, key)! };
 }
 
 export type PersistOutcome =
@@ -64,9 +90,9 @@ export async function gatePersist(
   value: string,
 ): Promise<PersistOutcome> {
   const policy = resolveKeyPolicy(key);
-  if (!policy.allowed) return { action: "denied", reason: "unknown_key" };
+  if (!policy.allowed) return { action: "denied", reason: policy.reason };
   const entry = policy.entry;
-  if (!entry || !entry.pii) return { action: "passthrough", value };
+  if (!entry.pii) return { action: "passthrough", value };
   try {
     const blob = await encryptForStorage(key, value);
     return { action: "encrypted", value: blob };
@@ -123,9 +149,9 @@ export async function gateLoad(
   stored: string,
 ): Promise<LoadOutcome> {
   const policy = resolveKeyPolicy(key);
-  if (!policy.allowed) return { action: "denied", reason: "unknown_key" };
+  if (!policy.allowed) return { action: "denied", reason: policy.reason };
   const entry = policy.entry;
-  if (!entry || !entry.pii) return { action: "passthrough", value: stored };
+  if (!entry.pii) return { action: "passthrough", value: stored };
   try {
     const plaintext = await decryptFromStorage(key, stored);
     return { action: "decrypted", value: plaintext };

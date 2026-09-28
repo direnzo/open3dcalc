@@ -162,16 +162,41 @@ policy the user is consenting to:
   narrowing those three entries to `sync: never` for the web build, is the
   follow-on, and it is a second re-consent.
 
+**Policy 1.7 → 1.8 (declaring `legacy_residue`).** `legacy_residue` is now a
+declared PII `sqlite_domain_tables` surface. Receipts issued under 1.7 evaluate as
+`policy_mismatch` and the user is re-consented for the delta. What changed in the
+policy the user is consenting to:
+
+- `legacy_residue` (Beta5 Wave 2, migration `0005_legacy_residue.sql`, ADR-001
+  §3.6) is declared. One row is the pre-remediation at-rest blob for one PII value
+  — an `enc1:safeStorage:<base64>` raw keyring output, or an `enc1:envelope:` v1.1
+  self-asserted-AAD envelope — copied aside byte for byte when §3.6 recovery
+  re-seals that value under the new bound envelope. It is PII-bearing because the
+  blob is a sealed copy of a user value and is the only retained copy after a
+  re-homing, so it must be purgeable and redacted on the same terms as live PII.
+- Its policy is `encrypted_at_rest` (the blob is ciphertext, never plaintext),
+  `sync: never`, `export: diagnostic_only` (only through `db:export` and an
+  unredacted diagnostic backup, which copy the raw file), `erasure:
+erase_on_delete_all`, `legal_basis: consent` (so a withdrawal erases it), and
+  retention `user_controlled` / `max_days: 0` — the approved mode is
+  copy-and-never-delete, so removal is the user's explicit erasure action and there
+  is **no TTL sweeper**.
+- Declaring it is the Wave 0 `history_entries` lesson applied forward: an
+  undeclared PII-bearing table is invisible to the ADR-002 §2.3 scan, the SPEC-02
+  §3 purge, the §6 rescan and the erasure post-condition while holding recovered
+  user data.
+
 **Why this re-consent is free, and why the next one will not be.** Nothing had
 shipped when 1.6 was cut, so no consent receipt issued under 1.5 exists in the
 wild outside a developer's own profile: no real user is interrupted, and the
 delta is a declaration rather than a change in what the app collects. That
 exemption is a property of the release state, not of the process — it is
 recorded here so a later reader does not mistake this bump for a routine one.
-**The same exemption covers 1.7** (the PII vault declaration) for the same
-reason: still nothing shipped, so no receipt issued under 1.6 exists outside a
-developer's own profile. The exemption is granted once, here; the first bump
-after a release does not get it. A
+**The same exemption covers 1.7 and 1.8** (the PII vault and `legacy_residue`
+declarations) for the same reason: still nothing shipped, so no receipt issued
+under 1.6 or 1.7 exists outside a developer's own profile. The exemption applies
+only to bumps cut before the first release; the first bump after a release does
+not get it. A
 declared PII surface added _after_ a release costs every user holding a live
 receipt one interrupted re-consent and, until they return, gates PII features
 that depend on consent. Decide the `policy_version` bump when the surface is

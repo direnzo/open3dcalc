@@ -1,9 +1,9 @@
 /**
  * Beta5 Wave 1 close-out — `pii_stage` is a DECLARED PII surface, and
- * `policy_version` has since moved on to 1.7 (the PII vault declaration), so
- * the fixture version this file pins is the CURRENT one and the receipts under
- * test are one step back: the invariant under test is "a bump re-consents",
- * which holds for any bump.
+ * `policy_version` has since moved on to 1.8 (1.7 declared the PII vault, 1.8
+ * declared `legacy_residue`), so the fixture version this file pins is the
+ * CURRENT one and the receipts under test are steps back: the invariant under
+ * test is "a bump re-consents", which holds for any bump.
  *
  * `pii_stage` was created by migration `0004_pii_stage.sql` and has been
  * PII-bearing since the moment it was written: a staged row carries the SEALED
@@ -141,9 +141,9 @@ describe("SPEC-01: pii_stage is a declared PII sqlite domain table", () => {
 // 2. The re-consent consequence — SPEC-04 §6
 // ---------------------------------------------------------------------------
 
-describe("SPEC-04: policy_version 1.7 re-consents a 1.6 receipt", () => {
-  it("is 1.7, so 1.6 receipts no longer carry over", () => {
-    expect(doc.policy_version).toBe("1.7");
+describe("SPEC-04: policy_version 1.8 re-consents a 1.6 receipt", () => {
+  it("is 1.8, so 1.6 receipts no longer carry over", () => {
+    expect(doc.policy_version).toBe("1.8");
   });
 
   it("a validly-digested 1.6 receipt evaluates policy_mismatch, not tampered", async () => {
@@ -162,7 +162,7 @@ describe("SPEC-04: policy_version 1.7 re-consents a 1.6 receipt", () => {
     expect(evaluation.consentGiven).toBe(false);
     // Retained for the delta UI — the old receipt is history, not rubbish.
     expect(evaluation.receipt?.policy_version).toBe("1.6");
-    expect(evaluation.currentPolicyVersion).toBe("1.7");
+    expect(evaluation.currentPolicyVersion).toBe("1.8");
   });
 
   it("the version alone drives it, and the hash alone drives it (two-sided binding)", async () => {
@@ -186,7 +186,7 @@ describe("SPEC-04: policy_version 1.7 re-consents a 1.6 receipt", () => {
     expect((await evaluateReceipt(hashOnly)).status).toBe("policy_mismatch");
   });
 
-  it("a receipt issued under 1.7 validates, so re-consent is reachable", async () => {
+  it("a receipt issued under 1.8 validates, so re-consent is reachable", async () => {
     // Without this, the mismatch tests above would be satisfied by a broken
     // gate that refuses every receipt: the re-consent path has to actually work.
     const { receipt, digest } = await issueReceipt(

@@ -114,13 +114,15 @@ describe("the erasure list is one constant, and it includes the stage table", ()
   it("every table the erasure paths handle is in PII_ERASURE_TABLES", () => {
     expect([...PII_ERASURE_TABLES]).toContain(PII_STAGE_TABLE);
     // The domain tables stay in the list — the stage table is additive, never a
-    // replacement for them.
+    // replacement for them. `legacy_residue` joined at policy_version 1.8: the
+    // retained legacy ciphertext is PII-bearing and must be purgeable.
     expect([...PII_ERASURE_TABLES]).toEqual([
       "customers",
       "quotes",
       "quote_items",
       "history_entries",
       "pii_stage",
+      "legacy_residue",
     ]);
   });
 });

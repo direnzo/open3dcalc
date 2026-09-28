@@ -291,12 +291,14 @@ describe("SPEC-01: the appdata PII-bearing surfaces are declared truthfully", ()
 // ---------------------------------------------------------------------------
 
 describe("SPEC-01: policy_version reflects the Beta5 corrections", () => {
-  it("is 1.7, so receipts issued under 1.6 no longer validate", () => {
+  it("is 1.8, so receipts issued under 1.6 no longer validate", () => {
     // 1.4 -> 1.5 for the corrections pinned in this file. 1.5 -> 1.6 declares
     // `pii_stage` as a PII sqlite domain table; see piiStageDeclaration.test.ts
     // for the re-consent side of that bump. 1.6 -> 1.7 declares
     // `open3dcalc_pii_vault`; see piiVaultDeclaration.test.ts for that side.
-    expect(doc.policy_version).toBe("1.7");
+    // 1.7 -> 1.8 declares `legacy_residue`, the retained legacy ciphertext the
+    // ADR-001 §3.6 recovery copies aside; see SPEC-04 §6.
+    expect(doc.policy_version).toBe("1.8");
   });
 });
 

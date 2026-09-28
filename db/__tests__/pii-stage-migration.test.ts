@@ -303,6 +303,60 @@ describe("requiredTables() — the db:import consequence of a new table", () => 
     }
   });
 
+  it("accepts a 0000-0004 database that has no legacy_residue yet", () => {
+    // The same trap one migration over: `legacy_residue` (0005) is created
+    // EMPTY and only receives a row if §3.6 recovery runs, which cannot have
+    // happened in a file that predates 0005. Requiring it would refuse exactly
+    // the pre-remediation backups this programme exists to restore.
+    const preDir = migrationsSubset([
+      "0000_initial.sql",
+      "0001_add_theme.sql",
+      "0002_products.sql",
+      "0003_filament_tare.sql",
+      "0004_pii_stage.sql",
+    ]);
+    const file = freshFile("pre-0005.db");
+    initDatabase(file, { migrationsDir: preDir });
+    closeDatabase();
+
+    const seeded = open(file);
+    try {
+      expect(
+        seeded
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_residue'",
+          )
+          .get(),
+      ).toBeUndefined();
+      seeded
+        .prepare("INSERT INTO storage VALUES (?, ?, ?)")
+        .run("open3dcalc_customers_v1", MARKER, 1_700_000_000_000);
+    } finally {
+      seeded.close();
+    }
+
+    expect(() => validateDatabaseFile(file)).not.toThrow();
+
+    // The runner creates the table empty and the user's row is still there.
+    initDatabase(file, { migrationsDir: MIGRATIONS_DIR });
+    closeDatabase();
+    const after = open(file);
+    try {
+      expect(
+        after.prepare("SELECT COUNT(*) AS c FROM legacy_residue").get() as {
+          c: number;
+        },
+      ).toEqual({ c: 0 });
+      expect(
+        after
+          .prepare("SELECT value FROM storage WHERE key = ?")
+          .get("open3dcalc_customers_v1") as { value: string },
+      ).toEqual({ value: MARKER });
+    } finally {
+      after.close();
+    }
+  });
+
   it("still refuses a candidate that is missing a real table", () => {
     // Pins the exemption to ONE table: a user-data table the migrations do not
     // recreate is still a hard refusal, so the exemption cannot be widened into

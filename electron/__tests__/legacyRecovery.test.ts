@@ -80,6 +80,28 @@ vi.mock("electron", () => ({
   },
 }));
 
+/**
+ * Make the manifest loader itself fail on demand. This is deliberately NOT the
+ * same thing as an unknown key: `loadManifestFromDisk` throws, so the whole
+ * index is unavailable and no key can be classified. A previous version of
+ * `resolveKeyPolicy` collapsed both into `{allowed:false}`, which `hydrateAll`
+ * read as "unknown key, pass the stored value through".
+ */
+const manifestState = vi.hoisted(() => ({ unloadable: false }));
+
+vi.mock("../manifestSource.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../manifestSource.js")>();
+  return {
+    ...actual,
+    loadManifestFromDisk: () => {
+      if (manifestState.unloadable) {
+        throw new Error("[manifestSource] synthetic unloadable fixture");
+      }
+      return actual.loadManifestFromDisk();
+    },
+  };
+});
+
 import {
   LegacyUnboundBlobError,
   adoptSessionPassphrase,
@@ -510,6 +532,59 @@ describe("hydration never re-hydrates an unreadable value", () => {
     const report = await hydrateAll(db);
     expect(report.unavailable.length).toBeGreaterThan(0);
     expect(report.unavailable[0]!.reason).toBeTruthy();
+  });
+});
+
+describe("an UNLOADABLE manifest fails closed for every key", () => {
+  /**
+   * The regression this pins: the manifest loader throwing is not the same fact
+   * as a key not being declared. `resolveKeyPolicy` used to return
+   * `{allowed:false}` for both, and `hydrateAll` read `allowed:false` as
+   * "unknown key" and copied the raw stored bytes into `values` untouched. On an
+   * unloadable manifest that applied to EVERY key, so a known PII key holding a
+   * SEALED ciphertext was handed back as its hydrated value — `enc1:...` where
+   * the customer's list should be. It also broke `hydrateAll`'s own documented
+   * guarantee that a quarantined key is absent, never a raw stored string.
+   *
+   * The test uses a genuinely unloadable manifest, not an unknown key, because
+   * the unknown-key path is a different fact and is covered above.
+   */
+  it("emits no stored value for any key and reports the classification failure", async () => {
+    seedRow(CUSTOMERS, writeLegacySafeStorageBlob(MARKER));
+    seedRow(QUOTES, await encryptForStorage(QUOTES, OTHER));
+    seedRow(SETTINGS, '{"theme":"dark"}');
+
+    const stored = db.prepare("SELECT key, value FROM storage").all() as Array<{
+      key: string;
+      value: string;
+    }>;
+
+    manifestState.unloadable = true;
+    let report: Awaited<
+      ReturnType<Awaited<typeof import("../legacyRecovery.js")>["hydrateAll"]>
+    >;
+    try {
+      const { hydrateAll } = await import("../legacyRecovery.js");
+      report = await hydrateAll(db);
+    } finally {
+      manifestState.unloadable = false;
+    }
+
+    // Fail closed: the classification is unknown, so NOTHING is emitted —
+    // neither a decrypted value nor the raw stored bytes.
+    expect(report.values.size).toBe(0);
+    for (const row of stored) {
+      expect(report.values.has(row.key)).toBe(false);
+      expect([...report.values.values()]).not.toContain(row.value);
+    }
+    // Every unclassifiable key is named, with a reason distinct from a key that
+    // is simply not declared.
+    expect(report.unavailable.map((u) => u.key).sort()).toEqual(
+      stored.map((row) => row.key).sort(),
+    );
+    expect(
+      report.unavailable.every((u) => u.reason === "manifest_unavailable"),
+    ).toBe(true);
   });
 });
 

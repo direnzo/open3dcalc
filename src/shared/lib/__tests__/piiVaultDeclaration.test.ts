@@ -131,15 +131,17 @@ describe("SPEC-01: the vault is a declared PII indexeddb surface", () => {
   });
 });
 
-describe("SPEC-04: policy_version 1.7 re-consents a 1.6 receipt", () => {
-  it("is 1.7", () => {
-    expect(doc.policy_version).toBe("1.7");
+describe("SPEC-04: policy_version 1.8 re-consents a 1.6 receipt", () => {
+  it("is 1.8", () => {
+    expect(doc.policy_version).toBe("1.8");
   });
 
   it("states why re-consenting is still free — nothing has shipped", async () => {
     // The exemption is a property of the RELEASE STATE, not of the process.
-    // Recorded as an assertion so a later reader cannot mistake 1.7 for a
-    // routine bump and repeat the reasoning at 1.8 when it is no longer free.
+    // Recorded as an assertion so a later reader cannot mistake 1.8 for a
+    // routine bump and repeat the reasoning at 1.9 when it is no longer free.
+    // 1.7 declared the vault; 1.8 declared `legacy_residue`. Neither had
+    // shipped. See SPEC-04 §6.
     const { issueReceipt, evaluateReceipt, receiptDigest } =
       await import("@/shared/lib/consentReceipt");
     const { receipt } = await issueReceipt([PII_VAULT_KEY], ["rehome_pii"]);
@@ -158,13 +160,13 @@ describe("SPEC-04: policy_version 1.7 re-consents a 1.6 receipt", () => {
     expect(evaluation.consentGiven).toBe(false);
     // The old receipt is retained as history for the delta UI, not discarded.
     expect(evaluation.receipt?.policy_version).toBe("1.6");
-    expect(evaluation.currentPolicyVersion).toBe("1.7");
+    expect(evaluation.currentPolicyVersion).toBe("1.8");
   });
 
-  it("a receipt issued under 1.7 validates, so the re-consent path is reachable", async () => {
+  it("a receipt issued under 1.8 validates, so the re-consent path is reachable", async () => {
     const { issueReceipt } = await import("@/shared/lib/consentReceipt");
     const { receipt } = await issueReceipt([PII_VAULT_KEY], ["rehome_pii"]);
-    expect(receipt.policy_version).toBe("1.7");
+    expect(receipt.policy_version).toBe("1.8");
   });
 });
 

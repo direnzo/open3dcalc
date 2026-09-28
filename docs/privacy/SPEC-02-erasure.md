@@ -169,7 +169,7 @@ by `piiDomainTables.test.ts` because it is a deletion: summing the full report
 again would compile and pass.
 
 **Row 5 now has a real target.** The only app database on this surface is
-`open3dcalc_pii_vault` (SPEC-01 `policy_version` 1.7, `pii: true`,
+`open3dcalc_pii_vault` (SPEC-01 `policy_version` 1.8, `pii: true`,
 `erasure: erase_on_delete_all`): the sealed browser store the three PII keys
 migrate onto off plaintext `localStorage`. `indexeddbAdapter().purge()` in
 `src/shared/lib/erasureSaga/rendererSweep.ts` enumerates `indexedDB.databases()`

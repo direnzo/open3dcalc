@@ -66,6 +66,7 @@ vi.mock("react-i18next", () => ({
 const CUSTOMERS = "open3dcalc_customers_v1";
 const SETTINGS = "open3dcalc_settings_v2";
 const INTERNAL = "open3dcalc_synthetic_internal";
+const QUOTES = "open3dcalc_quotes_v1";
 
 interface RowSnapshot {
   key: string;
@@ -283,6 +284,34 @@ describe("persistence bridge — a healthy manifest still sweeps", () => {
     ).toContain(INTERNAL);
     expect(
       db.prepare("SELECT value FROM storage WHERE key = ?").get(CUSTOMERS),
+    ).toBeDefined();
+  });
+
+  it("preserves a declared key that enters storage after hydration", async () => {
+    // A MISSING `hydrationOutcomes` record is not positive proof of staleness.
+    // The sweep re-reads `listKeys()` every cycle, so a row can appear in
+    // `storage` that hydration never enumerated: a second writer (another app
+    // instance, a restored or copied profile) or a future store that writes to
+    // the vault without a localStorage mirror. Here the key IS manifest-declared
+    // (`open3dcalc_quotes_v1`), so the old sweep — which deleted any row with no
+    // record — destroyed it without ever having classified it. The fix fails
+    // closed on a missing record for a declared key, exactly as it does for a
+    // refused read (`not_hydrated`).
+    resetManifestForTests(manifestFixture as ManifestDocument);
+    await initPersistenceBridge();
+
+    // Inserted AFTER hydration has finished enumerating `storage`.
+    seedRow(QUOTES, '{"quotes":["synthetic"]}', 11);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(
+      deleteCalls,
+      "a declared key with no hydrated record must not be swept: absence of a record is not proof of staleness",
+    ).not.toContain(QUOTES);
+    expect(
+      db.prepare("SELECT value FROM storage WHERE key = ?").get(QUOTES),
+      "the post-hydration row must survive the sweep",
     ).toBeDefined();
   });
 });

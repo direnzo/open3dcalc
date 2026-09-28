@@ -54,10 +54,20 @@ let hydrationCompleted = false;
  * read (a pre-AAD keyring blob, an authentication failure, a locked session,
  * or any unforeseen error) is absent from localStorage BY DESIGN, so that
  * absence is a refusal, not evidence of staleness. Recording the outcome per
- * key is what lets the sweep tell the two apart: a key marked `not_hydrated`
- * is preserved, while a key with no record at all was never hydration's to
- * classify (an internal row the manifest does not declare) and stays
- * sweep-eligible — see `deleteStaleKeys`.
+ * key is what lets the sweep tell the two apart: only a key marked `hydrated`
+ * is deletable, and a key marked `not_hydrated` is preserved.
+ *
+ * A MISSING record is not proof of staleness either, and fails closed like
+ * `not_hydrated`. The sweep re-reads `listKeys()` every cycle, so a key can
+ * enter `storage` AFTER hydration — a second writer to the SQLite file (another
+ * app instance, a restored or copied profile, or a future store that writes to
+ * the vault without a localStorage mirror). Hydration never enumerated such a
+ * key, so it has no record, and treating that absence as staleness would delete
+ * a declared key that was never classified at all. The one key that is NOT
+ * protected this way is a key the manifest does not declare: the manifest
+ * positively classified it `unknown_key`, which is a completed classification
+ * (not a missing record) and is what keeps the sweep's internal-row cleanup
+ * working — see `deleteStaleKeys`.
  *
  * It is keyed by the failure's OUTCOME, not its shape — a key that fails for a
  * new reason is covered without teaching the sweep about that reason — and it
@@ -526,17 +536,42 @@ async function deleteStaleKeys(): Promise<void> {
 
     for (const dbKey of dbKeys) {
       if (localKeys.has(dbKey)) continue;
-      // Positive proof, not absence: a declared key may be deleted only when
-      // hydration recorded that it WAS read and populated — its absence now is
-      // then a genuine runtime removal. A key hydration marked `not_hydrated`
-      // (unreadable, or enumerated with no value) is absent BY DESIGN, and
-      // "absent because the read failed" is not evidence of staleness. A key
-      // with no record at all was never hydration's to classify (an internal
-      // row the manifest does not declare), which is what keeps the sweep's
-      // original internal-row cleanup working.
-      if (hydrationOutcomes.get(dbKey) === "not_hydrated") {
+
+      // Positive proof, not absence. A row may be deleted as stale ONLY when
+      // hydration recorded that it read and populated the key: its localStorage
+      // counterpart is then genuinely gone because the app removed it at
+      // runtime.
+      if (hydrationOutcomes.get(dbKey) === "hydrated") {
+        await db().delete(dbKey);
+        continue;
+      }
+
+      // Everything else fails closed, because a MISSING record is no more proof
+      // of staleness than a refusal is. A record is missing for either of two
+      // reasons:
+      //
+      //  - `not_hydrated`: hydration enumerated the key and could not read it
+      //    (an unreadable blob, a locked session, an unforeseen error), so its
+      //    absence is a refusal BY DESIGN; or
+      //  - the key was never enumerated at hydration — it entered `storage`
+      //    afterwards, from a second writer (another app instance, a restored
+      //    profile, a future store with no localStorage mirror). The premise
+      //    "a row with no localStorage counterpart was removed at runtime" does
+      //    not hold for a row hydration never saw.
+      //
+      // A key the manifest does NOT declare is the one exception, and it is not
+      // a missing record in that sense: the manifest positively classified it
+      // `unknown_key`, the same classification `deleteGated` relies on to remove
+      // internal rows, and that classification permits deletion. Collapsing it
+      // with the fail-closed cases would disable the sweep's internal-row
+      // cleanup entirely. `isKeyAllowed` is safe to call: the manifest is known
+      // available — the guard above returned otherwise.
+      if (
+        hydrationOutcomes.get(dbKey) === "not_hydrated" ||
+        isKeyAllowed(dbKey)
+      ) {
         console.warn(
-          `[persistence-bridge] Preserving unhydrated key ${dbKey}: absence is not staleness`,
+          `[persistence-bridge] Preserving key ${dbKey}: no hydrated record, absence is not staleness`,
         );
         continue;
       }

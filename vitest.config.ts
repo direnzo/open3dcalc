@@ -20,12 +20,22 @@ export default defineConfig(
         provider: "v8",
         reporter: ["text", "json", "html"],
         include: [
-          "electron/update.ts",
+          // Main-process code. Extension-qualified so the generated output
+          // under electron/dist/** and electron/tsconfig.json are never
+          // picked up as "untested source" (see exclude below).
+          //
+          // `**/*.cts` is deliberately absent: electron/preload.cts is the
+          // only .cts under electron/ and the v8 provider's AST pass
+          // (rolldown) cannot parse its `import type ... with
+          // { "resolution-mode": "import" }` syntax — it drops the file with
+          // a warning regardless of configuration. See exclude below.
+          "electron/**/*.ts",
           "src/shared/lib/**",
           "src/shared/stores/**",
           "src/shared/hooks/**",
           "src/shared/components/**",
           "src/platform/desktop/overrides/**",
+          "src/platform/desktop/components/**",
           "db/schema/**",
         ],
         exclude: [
@@ -35,6 +45,23 @@ export default defineConfig(
           "**/*.test.*",
           "**/*.stories.*",
           "**/*.d.ts",
+          // Compiled output of electron/tsconfig.json (tsc outDir). Generated
+          // bytes, not source: measuring them double-counts the .ts above and
+          // reports coverage for code nobody wrote.
+          "electron/dist/**",
+          // The crypto self-test harness is executed by the REAL Electron
+          // binary in a separate process; vitest's v8 coverage only observes
+          // the vitest process, so it can only ever report this file as 0%.
+          // The harness itself is exercised by
+          // electron/__tests__/crypto.selftest.test.ts (which asserts on its
+          // JSON report), not by importing it.
+          "electron/selftest/**",
+          // Not instrumentable by the v8 provider: rolldown's parser rejects
+          // the import-attributes syntax above, so the provider always drops
+          // this file with a "Failed to parse ... Excluding it from coverage"
+          // warning. Excluding it explicitly keeps the report honest instead
+          // of silently absent.
+          "electron/preload.cts",
         ],
         thresholds: {
           statements: 30,

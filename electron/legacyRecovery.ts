@@ -572,7 +572,7 @@ export async function recoverLegacyKey(
 ): Promise<RecoveryResult> {
   const policy = resolveKeyPolicy(key);
   if (!policy.allowed)
-    return { key, recovered: false, verified: false, reason: "unknown_key" };
+    return { key, recovered: false, verified: false, reason: policy.reason };
   if (!policy.entry?.pii)
     return { key, recovered: false, verified: false, reason: "not_pii" };
 

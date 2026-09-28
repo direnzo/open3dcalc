@@ -586,6 +586,31 @@ describe("an UNLOADABLE manifest fails closed for every key", () => {
       report.unavailable.every((u) => u.reason === "manifest_unavailable"),
     ).toBe(true);
   });
+
+  /**
+   * §3.6 recovery is the one caller that re-merged the two facts.
+   * `recoverLegacyKey` returned `unknown_key` for ANY `!policy.allowed`, so an
+   * operator diagnosing an unloadable manifest was told the key was simply not
+   * declared. It fails closed (no value is emitted), but `reason` is a
+   * user-visible typed field (`electron.d.ts`, `preload.cts`), so the two
+   * refusals must stay distinct here exactly as they are in
+   * `gateLoad`/`gatePersist`/`hydrateAll`.
+   */
+  it("recoverLegacyKey keeps manifest_unavailable distinct from unknown_key", async () => {
+    seedRow(CUSTOMERS, writeLegacySafeStorageBlob(MARKER));
+    const { recoverLegacyKey } = await import("../legacyRecovery.js");
+
+    manifestState.unloadable = true;
+    try {
+      const result = await recoverLegacyKey(db, CUSTOMERS);
+      expect(result.recovered).toBe(false);
+      expect(result.verified).toBe(false);
+      // The key IS declared; it is the manifest that could not be read.
+      expect(result.reason).toBe("manifest_unavailable");
+    } finally {
+      manifestState.unloadable = false;
+    }
+  });
 });
 
 /** Where a retained legacy blob is expected to live after recovery. */

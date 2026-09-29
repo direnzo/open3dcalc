@@ -54,10 +54,29 @@
         "policy": "user_controlled",
         "max_days": 0
       },
-      "purpose": "Legacy compatibility input for the v2 history migration: its value embeds the full raw pre-migration history array (baseEntries) so an interrupted migration can be resumed, making it PII-bearing despite its marker-like name. Never synced or exported.",
+      "purpose": "LEGACY, read-only: an older build wrote the raw pre-migration history array (source/baseEntries/productsSource) here, making it PII-bearing despite its marker-like name. The current code NEVER writes it — it is read only to CONSUME a marker an old install already stored and to CLEAN it once the migration verifies; a new run records value-free progress under open3dcalc_migration_progress_v2. Never synced or exported.",
       "legal_basis": "consent",
       "owner": "hermes",
       "version": "1.2"
+    },
+    {
+      "key": "open3dcalc_migration_progress_v2",
+      "surface": "localStorage",
+      "platforms": ["electron", "web", "pwa"],
+      "class": "onboarding_flag",
+      "pii": false,
+      "persistence": "plaintext_allowed",
+      "sync": "never",
+      "export": "never",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Value-free progress marker for the v2 legacy-history migration (Beta5 W4.4). Its presence means a migration started and did not finish; a resumed run re-reads the INTACT legacy source (copy-without-delete) instead of a stored preimage, so the marker holds only a type and a version and never a record. It replaces the PII-bearing preimage an older build wrote to open3dcalc_migration_done_v2, which is now read/cleanup only. Non-PII operational state: it does not change what is collected or its legal basis, so it carries no policy_version bump and no re-consent.",
+      "legal_basis": "not_personal_data",
+      "owner": "hermes",
+      "version": "1.0"
     },
     {
       "key": "open3dcalc_quickstart_dismissed",

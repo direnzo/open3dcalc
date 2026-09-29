@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MIGRATION_MARKER_KEY,
+  MIGRATION_PROGRESS_KEY,
+  historyMigrationProgressValue,
   isHistoryMigrationBackup,
+  isHistoryMigrationProgress,
 } from "@/shared/lib/migration/marker";
 
 /**
@@ -109,5 +112,68 @@ describe("migration marker parser (read-only)", () => {
     expect(setItem).not.toHaveBeenCalled();
     expect(removeItem).not.toHaveBeenCalled();
     expect(clear).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * W4.4 — the current recovery marker is VALUE-FREE.
+ *
+ * The legacy PII-bearing marker above is read/cleanup only; a new run records
+ * its progress under a distinct key whose payload carries no record content.
+ */
+describe("value-free progress marker (W4.4)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("exports the value-free progress key literal", () => {
+    expect(MIGRATION_PROGRESS_KEY).toBe("open3dcalc_migration_progress_v2");
+    expect(MIGRATION_PROGRESS_KEY).not.toBe(MIGRATION_MARKER_KEY);
+  });
+
+  it("round-trips the value-free payload", () => {
+    const value = historyMigrationProgressValue();
+    expect(isHistoryMigrationProgress(value)).toEqual({
+      type: "open3dcalc-history-v2-progress",
+      v: 1,
+    });
+  });
+
+  it("the persisted payload embeds no record content or backup shape", () => {
+    const value = historyMigrationProgressValue();
+    expect(value).not.toMatch(/source|baseEntries|productsSource|entries/);
+    expect(value).not.toContain("open3dcalc-history-v2-backup");
+  });
+
+  it.each([
+    [
+      "legacy backup",
+      JSON.stringify({
+        type: "open3dcalc-history-v2-backup",
+        source: "[]",
+        baseEntries: [],
+      }),
+    ],
+    ["legacy non-JSON done value", "done"],
+    [
+      "wrong version",
+      JSON.stringify({ type: "open3dcalc-history-v2-progress", v: 2 }),
+    ],
+    ["wrong type", JSON.stringify({ type: "open3dcalc-other", v: 1 })],
+    ["empty string", ""],
+  ])("rejects a non-progress value (%s)", (_label, raw) => {
+    expect(isHistoryMigrationProgress(raw)).toBeNull();
+  });
+
+  it("neither parser writes: both are read-only", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    const removeItem = vi.spyOn(Storage.prototype, "removeItem");
+
+    isHistoryMigrationProgress(historyMigrationProgressValue());
+    isHistoryMigrationProgress("done");
+    isHistoryMigrationBackup(JSON.stringify(VALID_BACKUP));
+
+    expect(setItem).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
   });
 });

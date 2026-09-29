@@ -230,6 +230,46 @@ describe("SPEC-01: open3dcalc_migration_done_v2 is PII-bearing", () => {
 });
 
 // ---------------------------------------------------------------------------
+// W4.4 — the recovery marker is never PII in plaintext for new writes
+// ---------------------------------------------------------------------------
+
+describe("SPEC-01: the W4.4 value-free progress marker replaces the PII preimage", () => {
+  it("declares open3dcalc_migration_progress_v2 as a non-PII onboarding flag", () => {
+    expect(
+      getEntry(manifest, "open3dcalc_migration_progress_v2"),
+    ).toMatchObject({
+      key: "open3dcalc_migration_progress_v2",
+      surface: "localStorage",
+      platforms: ["electron", "web", "pwa"],
+      class: "onboarding_flag",
+      pii: false,
+      persistence: "plaintext_allowed",
+      sync: "never",
+      export: "never",
+      erasure: "erase_on_delete_all",
+      legal_basis: "not_personal_data",
+      owner: "hermes",
+    });
+  });
+
+  it("marks the legacy PII marker read-only, pointing at the value-free key", () => {
+    const purpose =
+      getEntry(manifest, "open3dcalc_migration_done_v2")?.purpose ?? "";
+    // The declaration must state the current code never writes it, and name the
+    // value-free key that replaced it.
+    expect(purpose).toMatch(/never writes/i);
+    expect(purpose).toMatch(/read-only/i);
+    expect(purpose).toMatch(/open3dcalc_migration_progress_v2/);
+  });
+
+  it("adds no policy_version bump for the operational non-PII flag", () => {
+    // Adding a non-PII operational marker does not change what is collected or
+    // its legal basis, so the shipped policy version is unchanged.
+    expect(doc.policy_version).toBe("1.8");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Correction 4 — appdata_temp_staging was mis-declared
 // ---------------------------------------------------------------------------
 

@@ -604,7 +604,10 @@ describe("useAppInit tutorial auto-start", () => {
 
   it("recovers the complete legacy history after the second persistence write fails", async () => {
     const historyKey = "open3dcalc_history_v2";
-    const recoveryKey = "open3dcalc_migration_done_v2";
+    // W4.4: the CURRENT marker is the value-free progress key; the PII-bearing
+    // legacy key is asserted to stay absent.
+    const recoveryKey = "open3dcalc_migration_progress_v2";
+    const legacyPiiMarker = "open3dcalc_migration_done_v2";
     const resultOne = {
       materialCost: 8,
       energyCost: 1,
@@ -723,14 +726,19 @@ describe("useAppInit tutorial auto-start", () => {
     await vi.waitFor(() => expect(counter.writes).toBe(2));
     await settleWrites();
 
-    // The durable recovery marker SURVIVED, carrying the original source so the
-    // next startup can resume, and the legacy input was not deleted or rewritten.
+    // The durable recovery marker SURVIVED so the next startup can resume from
+    // the intact source — but it is VALUE-FREE (W4.4): it carries no record.
     expect(storageValues.has(recoveryKey)).toBe(true);
-    expect(JSON.parse(storageValues.get(recoveryKey)!)).toMatchObject({
-      type: "open3dcalc-history-v2-backup",
-      source: originalSource,
-      baseEntries: [],
+    expect(JSON.parse(storageValues.get(recoveryKey)!)).toEqual({
+      type: "open3dcalc-history-v2-progress",
+      v: 1,
     });
+    // No raw legacy content in the persisted marker value.
+    expect(storageValues.get(recoveryKey)).not.toContain(
+      "legacy-history-resin-01",
+    );
+    // The PII-bearing legacy marker was NEVER written.
+    expect(storageValues.has(legacyPiiMarker)).toBe(false);
     expect(storageValues.get(historyKey)).toBe(originalSource);
     expect(storageRemoveItem).not.toHaveBeenCalledWith(recoveryKey);
     // NO plaintext PII write: the legacy history key was never written.
@@ -845,7 +853,8 @@ describe("useAppInit tutorial auto-start", () => {
   it("recovers both original sources after a durable product write and partial history write", async () => {
     const historyKey = "open3dcalc_history_v2";
     const productKey = "open3dcalc_products";
-    const recoveryKey = "open3dcalc_migration_done_v2";
+    const recoveryKey = "open3dcalc_migration_progress_v2";
+    const legacyPiiMarker = "open3dcalc_migration_done_v2";
     const { productSource, historySource, expectedEntries } =
       createCombinedLegacyFixtures();
     storageValues.set(productKey, productSource);
@@ -862,15 +871,18 @@ describe("useAppInit tutorial auto-start", () => {
     await vi.waitFor(() => expect(counter.writes).toBe(3));
     await settleWrites();
 
-    // The durable recovery marker SURVIVED with both original sources, so the
-    // next startup can resume, and neither plaintext source was removed.
+    // The durable recovery marker SURVIVED so the next startup can resume from
+    // the intact sources — but it is VALUE-FREE (W4.4): it carries no record.
     expect(storageValues.has(recoveryKey)).toBe(true);
     expect(JSON.parse(storageValues.get(recoveryKey)!)).toEqual({
-      type: "open3dcalc-history-v2-backup",
-      source: historySource,
-      baseEntries: [],
-      productsSource: productSource,
+      type: "open3dcalc-history-v2-progress",
+      v: 1,
     });
+    expect(storageValues.get(recoveryKey)).not.toContain(
+      "legacy-product-compat-01",
+    );
+    // The PII-bearing legacy marker was NEVER written.
+    expect(storageValues.has(legacyPiiMarker)).toBe(false);
     expect(storageValues.get(productKey)).toBe(productSource);
     expect(storageValues.get(historyKey)).toBe(historySource);
     expect(storageRemoveItem).not.toHaveBeenCalledWith(productKey);
@@ -940,5 +952,119 @@ describe("useAppInit tutorial auto-start", () => {
     renderHook(() => useAppInit(vi.fn()));
     await settleWrites();
     expect(useHistoryStore.getState().entries).toEqual(expectedEntries);
+  });
+
+  it("consumes and clears a LEGACY PII marker, resuming from its embedded source", async () => {
+    const historyKey = "open3dcalc_history_v2";
+    const legacyMarkerKey = "open3dcalc_migration_done_v2";
+    const result = {
+      totalCost: 9,
+      sellPrice: 18,
+      profit: 9,
+      materialCost: 3,
+      energyCost: 1,
+      machineCost: 1,
+      hardwareCost: 0,
+      consumablesCost: 0,
+      laborCost: 1,
+      softwareCost: 0,
+      failureCost: 0,
+      extrasCost: 0,
+      postProcessingCost: 3,
+      subtotal: 9,
+      marketplaceFee: 0,
+      taxAmount: 0,
+      costPerGram: 0.18,
+      costPerUnit: 9,
+      unitWeight: 50,
+      estimatedPrintTime: 1,
+      targetMarginPercent: 50,
+      breakEvenPrice: 9,
+      actualMargin: 50,
+      carbonFootprintGrams: 2,
+    };
+    const expected = {
+      id: "legacy-marker-hist-01",
+      timestamp: 1_700_000_000_501,
+      type: "fdm",
+      name: "Legado • cinza",
+      summary: "Legado • cinza",
+      totalCost: 9,
+      sellPrice: 18,
+      profit: 9,
+      result,
+      snapshot: null,
+    };
+    // A marker as an OLD build wrote it: the raw source is embedded (PII).
+    const legacyMarker = JSON.stringify({
+      type: "open3dcalc-history-v2-backup",
+      source: JSON.stringify([
+        {
+          id: "legacy-marker-hist-01",
+          timestamp: 1_700_000_000_501,
+          type: "fdm",
+          summary: "Legado • cinza",
+          totalCost: 9,
+          sellPrice: 18,
+          profit: 9,
+          result,
+          snapshot: null,
+        },
+      ]),
+      baseEntries: [],
+    });
+    storageValues.set(legacyMarkerKey, legacyMarker);
+    // No live history key: recovery must read the marker's embedded source.
+    expect(storageValues.has(historyKey)).toBe(false);
+
+    await unlockVault();
+
+    let legacyMarkerClearedAfterVerification = false;
+    storageRemoveItem.mockImplementation((key: string) => {
+      if (key === legacyMarkerKey) {
+        legacyMarkerClearedAfterVerification =
+          JSON.stringify(useHistoryStore.getState().entries) ===
+          JSON.stringify([expected]);
+      }
+      storageValues.delete(key);
+    });
+
+    renderHook(() => useAppInit(vi.fn()));
+
+    await vi.waitFor(() =>
+      expect(storageValues.has(legacyMarkerKey)).toBe(false),
+    );
+    await settleWrites();
+
+    const migrated = useHistoryStore.getState().entries;
+    expect(migrated).toHaveLength(1);
+    expect(migrated[0]).toEqual(expected);
+    await expect(vaultHistoryEntries()).resolves.toEqual([expected]);
+    // The legacy marker was cleared only AFTER the full set verified.
+    expect(legacyMarkerClearedAfterVerification).toBe(true);
+    expect(storageValues.has(legacyMarkerKey)).toBe(false);
+    // Read compatibility: the marker is READ and REMOVED, never rewritten.
+    expect(storageSetItem).not.toHaveBeenCalledWith(
+      legacyMarkerKey,
+      expect.anything(),
+    );
+    // No new PII marker was written in its place.
+    expect(storageValues.has("open3dcalc_migration_progress_v2")).toBe(false);
+  });
+
+  it("clears the value-free progress marker when no legacy source remains", async () => {
+    const progressKey = "open3dcalc_migration_progress_v2";
+    // An interrupted run left the value-free flag, but the source is gone (a
+    // corrupt profile). The flag must be cleared so it cannot stall startup.
+    storageValues.set(
+      progressKey,
+      JSON.stringify({ type: "open3dcalc-history-v2-progress", v: 1 }),
+    );
+
+    renderHook(() => useAppInit(vi.fn()));
+    await flushMigration();
+
+    expect(storageValues.has(progressKey)).toBe(false);
+    expect(useHistoryStore.getState().entries).toEqual([]);
   });
 });

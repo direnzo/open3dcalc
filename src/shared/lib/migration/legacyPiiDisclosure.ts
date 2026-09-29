@@ -57,7 +57,9 @@ import { guardedStorage } from "@/shared/lib/manifestStorage";
 import { LEGACY_PII_REHOME_MARKER_KEY } from "@/shared/lib/migration/legacyPiiRehome";
 import {
   MIGRATION_MARKER_KEY,
+  MIGRATION_PROGRESS_KEY,
   isHistoryMigrationBackup,
+  isHistoryMigrationProgress,
 } from "@/shared/lib/migration/marker";
 
 /** The re-home disclosure state shown to the user. */
@@ -105,12 +107,33 @@ export interface LegacyPiiDisclosureOptions {
   vault?: PiiVaultAccessState;
 }
 
-function historyMarkerState(raw: string | null): HistoryMarkerState {
-  if (raw === null) return "absent";
+/**
+ * Derive the history-marker state from BOTH marker generations (W4.4).
+ *
+ * A legacy PII-bearing backup is a resumable preimage; the current value-free
+ * progress marker is the same signal without the preimage (the source is intact
+ * and re-read). Either one means an interrupted migration, so the panel stays
+ * honest for old and new builds alike. Only the KEY NAMES are ever exposed.
+ */
+function historyMarkerState(
+  legacyRaw: string | null,
+  progressRaw: string | null,
+): HistoryMarkerState {
+  if (legacyRaw === null && progressRaw === null) return "absent";
   // A parseable backup is a durable recovery preimage: an interrupted
-  // migration. The legacy non-JSON "done" value and any non-backup document
-  // mean there is nothing to resume.
-  return isHistoryMigrationBackup(raw) !== null ? "resumable" : "complete";
+  // migration. The value-free progress marker is the same signal.
+  if (legacyRaw !== null && isHistoryMigrationBackup(legacyRaw) !== null) {
+    return "resumable";
+  }
+  if (
+    progressRaw !== null &&
+    isHistoryMigrationProgress(progressRaw) !== null
+  ) {
+    return "resumable";
+  }
+  // The legacy non-JSON "done" value and any non-marker document mean there is
+  // nothing to resume.
+  return "complete";
 }
 
 function rehomeState(
@@ -137,7 +160,10 @@ export function getLegacyPiiDisclosure(
 
   const report = detectLegacyPlaintextPii(read);
   const completed = read(LEGACY_PII_REHOME_MARKER_KEY) !== null;
-  const historyState = historyMarkerState(read(MIGRATION_MARKER_KEY));
+  const historyState = historyMarkerState(
+    read(MIGRATION_MARKER_KEY),
+    read(MIGRATION_PROGRESS_KEY),
+  );
 
   return {
     residue: {

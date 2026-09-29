@@ -24,7 +24,10 @@ vi.mock("@/shared/lib/crypto/piiStoreHydration", async (importOriginal) => {
 });
 
 import { guardedStorage } from "@/shared/lib/manifestStorage";
-import { MIGRATION_MARKER_KEY } from "@/shared/lib/migration/marker";
+import {
+  MIGRATION_MARKER_KEY,
+  MIGRATION_PROGRESS_KEY,
+} from "@/shared/lib/migration/marker";
 import { LEGACY_PII_REHOME_MARKER_KEY } from "@/shared/lib/migration/legacyPiiRehome";
 import {
   getLegacyPiiDisclosure,
@@ -206,6 +209,29 @@ describe("getLegacyPiiDisclosure — history migration marker (value-free)", () 
     expect(disclosure.historyMarker.state).toBe("complete");
   });
 
+  it("reports resumable for the W4.4 value-free progress marker", () => {
+    // A new build never stores a preimage; the value-free progress marker is
+    // the same "interrupted" signal, so the panel must not regress to pending.
+    const read = readMap({
+      [CUSTOMERS]: persisted(1, "customers"),
+      [MIGRATION_PROGRESS_KEY]: JSON.stringify({
+        type: "open3dcalc-history-v2-progress",
+        v: 1,
+      }),
+    });
+    const disclosure = disclosureWith({ read, vault: LOCKED });
+    expect(disclosure.historyMarker.state).toBe("resumable");
+    expect(disclosure.rehome.state).toBe("incomplete");
+  });
+
+  it("reports complete for a non-marker value under the progress key", () => {
+    const disclosure = disclosureWith({
+      read: readMap({ [MIGRATION_PROGRESS_KEY]: JSON.stringify({ v: 1 }) }),
+      vault: LOCKED,
+    });
+    expect(disclosure.historyMarker.state).toBe("complete");
+  });
+
   it("never exposes the marker's record values", () => {
     const read = readMap({
       [MIGRATION_MARKER_KEY]: JSON.stringify({
@@ -238,6 +264,7 @@ describe("getLegacyPiiDisclosure — default readers", () => {
       HISTORY,
       LEGACY_PII_REHOME_MARKER_KEY,
       MIGRATION_MARKER_KEY,
+      MIGRATION_PROGRESS_KEY,
     ]) {
       expect(spy).toHaveBeenCalledWith(key);
     }

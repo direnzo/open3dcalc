@@ -124,20 +124,6 @@ const KEYS = {
 } as const;
 
 /**
- * The three PII keys migrated onto the encrypted vault (Wave 3). They are
- * NEVER written to `localStorage` by this module: `collectSyncData` reads them
- * from the hydrated stores and `applySyncData` writes them back through those
- * stores (which persist to the vault). `guardedSyncStorage` additionally
- * refuses a plaintext write for any key the manifest marks `pii:true`, so a
- * future edit cannot silently reintroduce the leak (HIGH-1).
- */
-export const PII_SYNC_KEYS = [
-  KEYS.history,
-  KEYS.customers,
-  KEYS.quotes,
-] as const;
-
-/**
  * Whether the vault-backed PII stores are hydrated and therefore safe to sync.
  *
  * `true` only once the vault is unlocked AND all three stores rehydrated. When

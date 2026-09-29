@@ -5,9 +5,11 @@
  * `open3dcalc_history_v2`) now live in the encrypted vault. This spec proves,
  * on a REAL startup run rather than a unit call, that the startup path adds no
  * `localStorage` entry for any of them, and that the only keys the file writes
- * are the declared recovery marker and the non-PII product key.
+ * are the VALUE-FREE progress marker (W4.4) and the non-PII product key. It
+ * also proves that no value the migration persists embeds the raw legacy
+ * content: the marker can never be PII in plaintext.
  *
- * It uses the real `guardardedStorage` (not the mocked one the sibling suite
+ * It uses the real `guardedStorage` (not the mocked one the sibling suite
  * installs) so a write that reached `localStorage` would land in the real
  * store and be observed. `localStorage` is reset between specs.
  */
@@ -24,8 +26,17 @@ const MIGRATED_KEYS = [
   "open3dcalc_quotes_v1",
   "open3dcalc_history_v2",
 ] as const;
-const RECOVERY_MARKER = "open3dcalc_migration_done_v2";
+/**
+ * The legacy PII-bearing marker (W4.4). New code must NEVER write it; it is
+ * read only to consume/clean a marker an older build already stored.
+ */
+const LEGACY_PII_MARKER = "open3dcalc_migration_done_v2";
+/** The value-free progress marker the current migration writes instead. */
+const PROGRESS_MARKER = "open3dcalc_migration_progress_v2";
 const PRODUCTS_KEY = "open3dcalc_products";
+
+/** A unique, high-signal token seeded into the legacy source. */
+const PII_CANARY = "SENTINEL-MIGRATION-PII-CANARY";
 
 /** A legacy history array, the input the migration reads to detect work. */
 const LEGACY_HISTORY = JSON.stringify([
@@ -103,18 +114,55 @@ describe("useAppInit — no plaintext PII write on startup", () => {
       }
     }
 
-    // Structural half: the ONLY keys the startup path writes are the declared
-    // recovery marker and the non-PII product key.
+    // Structural half: the ONLY keys the startup path writes are the value-free
+    // progress marker and the non-PII product key.
     const writtenKeys = setSpy.mock.calls.map(
       (call: [key: string, value: string]) => call[0],
     );
     const unexpected = writtenKeys.filter(
-      (key: string) => key !== RECOVERY_MARKER && key !== PRODUCTS_KEY,
+      (key: string) => key !== PROGRESS_MARKER && key !== PRODUCTS_KEY,
     );
     expect(unexpected).toEqual([]);
     expect(writtenKeys).not.toContain("open3dcalc_customers_v1");
     expect(writtenKeys).not.toContain("open3dcalc_quotes_v1");
     expect(writtenKeys).not.toContain("open3dcalc_history_v2");
+    // The PII-bearing legacy marker is never written by the current code.
+    expect(writtenKeys).not.toContain(LEGACY_PII_MARKER);
+  });
+
+  it("never writes PII/raw history into any value the marker persists", async () => {
+    // Seed the legacy source with a canary so a raw copy of it is detectable in
+    // any value the migration writes.
+    const legacyWithCanary = LEGACY_HISTORY.replace(
+      "Peça sintética",
+      PII_CANARY,
+    );
+    window.localStorage.setItem("open3dcalc_history_v2", legacyWithCanary);
+
+    renderHook(() => useAppInit(vi.fn()));
+    // Let the fire-and-forget migration settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // W4.4: NOT ONE value the migration persists may embed the raw legacy
+    // content. The recovery marker must be value-free.
+    for (const call of setSpy.mock.calls as Array<[string, string]>) {
+      expect(String(call[1])).not.toContain(PII_CANARY);
+    }
+
+    // The value written under the progress marker carries no backup shape.
+    const markerWrite = (setSpy.mock.calls as Array<[string, string]>).find(
+      ([key]) => key === PROGRESS_MARKER,
+    );
+    expect(markerWrite).toBeDefined();
+    expect(markerWrite![1]).not.toMatch(/source|baseEntries|productsSource/);
+    // And the legacy PII marker is never (re)written.
+    expect(
+      (setSpy.mock.calls as Array<[string, string]>).some(
+        ([key]) => key === LEGACY_PII_MARKER,
+      ),
+    ).toBe(false);
   });
 
   it("writes no migrated PII key even when there is no legacy work to do", async () => {

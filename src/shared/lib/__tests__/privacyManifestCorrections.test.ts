@@ -220,12 +220,114 @@ describe("SPEC-01: open3dcalc_migration_done_v2 is PII-bearing", () => {
     expect(purpose).toMatch(/history/i);
   });
 
+  it("purpose discloses the plaintext residue the encrypted_at_rest policy does not describe", () => {
+    // SPEC-01 truthfulness: `persistence: encrypted_at_rest` is the policy for
+    // NEW writes, and the current code never writes this key. Any value an old
+    // build left is PLAINTEXT residue retained by copy-without-delete and
+    // declared as such — the purpose must say all three facts explicitly.
+    const purpose =
+      getEntry(manifest, "open3dcalc_migration_done_v2")?.purpose ?? "";
+    expect(purpose).toMatch(/never writes/i);
+    expect(purpose).toMatch(/plaintext/i);
+    expect(purpose).toMatch(/copy-without-delete/i);
+    expect(purpose).toMatch(/disclos/i);
+  });
+
   it("keeps open3dcalc_products as non-PII (explicitly out of scope)", () => {
     expect(getEntry(manifest, "open3dcalc_products")).toMatchObject({
       pii: false,
       persistence: "plaintext_allowed",
       legal_basis: "not_personal_data",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W4.4 — the recovery marker is never PII in plaintext for new writes
+// ---------------------------------------------------------------------------
+
+describe("SPEC-01: the W4.4 value-free progress marker replaces the PII preimage", () => {
+  it("declares open3dcalc_migration_progress_v2 as a non-PII onboarding flag", () => {
+    expect(
+      getEntry(manifest, "open3dcalc_migration_progress_v2"),
+    ).toMatchObject({
+      key: "open3dcalc_migration_progress_v2",
+      surface: "localStorage",
+      platforms: ["electron", "web", "pwa"],
+      class: "onboarding_flag",
+      pii: false,
+      persistence: "plaintext_allowed",
+      sync: "never",
+      export: "never",
+      erasure: "erase_on_delete_all",
+      legal_basis: "not_personal_data",
+      owner: "hermes",
+    });
+  });
+
+  it("marks the legacy PII marker read-only, pointing at the value-free key", () => {
+    const purpose =
+      getEntry(manifest, "open3dcalc_migration_done_v2")?.purpose ?? "";
+    // The declaration must state the current code never writes it, and name the
+    // value-free key that replaced it.
+    expect(purpose).toMatch(/never writes/i);
+    expect(purpose).toMatch(/read-only/i);
+    expect(purpose).toMatch(/open3dcalc_migration_progress_v2/);
+  });
+
+  it("adds no policy_version bump for the operational non-PII flag", () => {
+    // Adding a non-PII operational marker does not change what is collected or
+    // its legal basis, so the shipped policy version is unchanged.
+    expect(doc.policy_version).toBe("1.8");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5 — the new value-free operational keys are declared and pinned non-PII
+// ---------------------------------------------------------------------------
+
+describe("SPEC-01: the new value-free operational keys are pinned non-PII", () => {
+  it.each([
+    "open3dcalc_legacy_keep_readonly_v1",
+    "open3dcalc_migration_fingerprint_v1",
+  ])("%s is a non-PII plaintext onboarding flag", (key) => {
+    const entry = getEntry(manifest, key);
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({
+      key,
+      surface: "localStorage",
+      platforms: ["electron", "web", "pwa"],
+      class: "onboarding_flag",
+      pii: false,
+      persistence: "plaintext_allowed",
+      sync: "never",
+      export: "never",
+      erasure: "erase_on_delete_all",
+      legal_basis: "not_personal_data",
+      owner: "hermes",
+    });
+  });
+
+  it("keep-read-only declares it stores only a value-free residue signature", () => {
+    const purpose =
+      getEntry(manifest, "open3dcalc_legacy_keep_readonly_v1")?.purpose ?? "";
+    // The decision must be re-askable the moment the residue changes, so only
+    // the residue SIGNATURE (names + counts) may be persisted.
+    expect(purpose).toMatch(/signature/i);
+    expect(purpose).toMatch(/count/i);
+    expect(purpose).toMatch(/never a record|never a value/i);
+  });
+
+  it("drift fingerprint declares it stores only counts", () => {
+    const purpose =
+      getEntry(manifest, "open3dcalc_migration_fingerprint_v1")?.purpose ?? "";
+    expect(purpose).toMatch(/counts?/i);
+    expect(purpose).toMatch(/never a record|never a value/i);
+  });
+
+  it("both keys pass the S1 gate (a real writer must not be a silent no-op)", () => {
+    expect(checkKey("open3dcalc_legacy_keep_readonly_v1").allowed).toBe(true);
+    expect(checkKey("open3dcalc_migration_fingerprint_v1").allowed).toBe(true);
   });
 });
 

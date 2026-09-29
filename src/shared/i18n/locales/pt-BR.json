@@ -1162,7 +1162,10 @@
       "resultVaultLocked": "Migração recusada: o cofre está bloqueado. Desbloqueie com sua senha e tente novamente. Nada foi escrito.",
       "resultNothingToMigrate": "Nada a migrar: não há registros legados reconhecíveis.",
       "resultIncomplete": "A migração não foi concluída nem verificada. Nada foi apagado; tente novamente.",
-      "close": "Fechar"
+      "close": "Fechar",
+      "keepReadOnlyTitle": "Você optou por manter os dados legados somente leitura",
+      "keepReadOnlyActive": "A pergunta não será repetida enquanto esses dados não mudarem. Nada foi migrado nem apagado; o resíduo em texto puro continua divulgado acima.",
+      "keepReadOnlyReopen": "Reabrir a escolha"
     },
     "quarantine": {
       "title": "Quarentena de dados legados",
@@ -1257,6 +1260,9 @@
       "historyComplete": "Concluída",
       "historyResumable": "Retomável — uma migração interrompida pode ser retomada",
       "markerNote": "Chave do marcador: {{key}}",
+      "legacyMarkerPlaintext": "O marcador legado {{key}} ainda guarda um valor em texto puro. O código atual nunca escreve esta chave; qualquer valor remanescente é resíduo em texto puro de uma versão antiga, mantido sem exclusão automática até uma eliminação explícita.",
+      "driftHeading": "Alteração na fonte legada",
+      "driftWarning": "A fonte legada mudou depois da migração: {{sources}} já não corresponde ao que foi migrado. Nada foi reconciliado automaticamente.",
       "valueFreeNote": "Este painel é informativo e sem valores: exibe apenas nomes de chave, contagens e estados."
     }
   },

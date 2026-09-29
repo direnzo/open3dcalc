@@ -5,9 +5,16 @@ import { persistCalculatorSettings } from "@/shared/stores/calculatorStore.helpe
 import { guardedStorage } from "@/shared/lib/manifestStorage";
 import {
   MIGRATION_MARKER_KEY,
+  MIGRATION_PROGRESS_KEY,
+  historyMigrationProgressValue,
   isHistoryMigrationBackup,
+  isHistoryMigrationProgress,
   type HistoryMigrationBackup,
 } from "@/shared/lib/migration/marker";
+import {
+  MIGRATION_FINGERPRINT_KEY,
+  migrationFingerprintValue,
+} from "@/shared/lib/migration/migrationDrift";
 import {
   didPiiWritesCommit,
   getPiiStoreHydrationStatus,
@@ -23,7 +30,11 @@ import { useTutorialStore } from "@/shared/stores/tutorialStore";
 import { useLayoutStore } from "@/shared/stores/layoutStore";
 import { useTutorialTabNavigation } from "@/shared/hooks/useTutorialTabNavigation";
 import type { Tab } from "@/shared/components/AppShell/tabs";
-import type { CalculationResult, CalculationSnapshot } from "@/shared/types";
+import type {
+  CalculationResult,
+  CalculationSnapshot,
+  HistoryEntry,
+} from "@/shared/types";
 
 /**
  * App bootstrap shared by both platforms (V2.0 Wave 1).
@@ -57,6 +68,75 @@ type LegacyHistoryItem = {
 const HISTORY_KEY = "open3dcalc_history_v2";
 const PRODUCTS_KEY = "open3dcalc_products";
 
+/**
+ * What a legacy-history migration needs to run or resume — WITHOUT carrying any
+ * record content.
+ *
+ * W4.4: the recovery marker must never be PII in plaintext. The preimage is no
+ * longer needed because the mode is copy-without-delete: the legacy source is
+ * never erased, so a resumed run re-reads it from the intact key. This context
+ * therefore holds only value-free facts (the pre-import base entries, an opaque
+ * product-source string used solely for the "can this key be dropped?" compare,
+ * and two flags).
+ */
+type HistoryMigrationContext = {
+  /** Entries that predated the import; the store resets to them on resume. */
+  baseEntries: HistoryEntry[];
+  /** The raw product source seen at start (business data, never PII). */
+  productsSource?: string;
+  /** Reset the store to `baseEntries` and re-import the full set (resume). */
+  restoreBaseEntries: boolean;
+  /** A legacy PII marker was consumed; clear it after verification (§3.3). */
+  legacyMarker: boolean;
+};
+
+/** Parse a storage value into an array, or `undefined` when it is not one. */
+function parseArrayOrUndefined(raw: string | null): unknown[] | undefined {
+  if (raw === null) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A stable content signature for a history record that does NOT depend on its
+ * id.
+ *
+ * A legacy record may omit the id; `addEntry` then assigns a GENERATED id that
+ * differs on every run, so an id set alone cannot recognize the record an
+ * interrupted run already added and the merge would duplicate it on every
+ * resume. Two records with the same content produce the same signature, which
+ * is what makes the id-less half of the merge idempotent. Value-preserving:
+ * every persisted field that is not the id participates, and nothing is
+ * invented.
+ */
+function entrySignature(entry: {
+  timestamp?: number;
+  type?: "fdm" | "resin";
+  name?: string;
+  summary?: string;
+  totalCost?: number;
+  sellPrice?: number;
+  profit?: number;
+  result?: unknown;
+  snapshot?: unknown;
+}): string {
+  return JSON.stringify([
+    entry.timestamp ?? null,
+    entry.type ?? null,
+    entry.name ?? null,
+    entry.summary ?? null,
+    entry.totalCost ?? null,
+    entry.sellPrice ?? null,
+    entry.profit ?? null,
+    entry.result ?? null,
+    entry.snapshot ?? null,
+  ]);
+}
+
 const FALLBACK_RESULT: CalculationResult = {
   materialCost: 0,
   energyCost: 0,
@@ -86,13 +166,11 @@ const FALLBACK_RESULT: CalculationResult = {
 
 async function migrateLegacyHistory(
   legacyItems: unknown[],
-  source: string,
-  backup?: HistoryMigrationBackup,
+  context: HistoryMigrationContext,
   legacyProducts?: unknown[],
-  restoreBaseEntries = false,
 ): Promise<boolean> {
   const historyStore = useHistoryStore.getState();
-  const baseEntries = backup?.baseEntries ?? historyStore.entries;
+  const baseEntries = context.baseEntries;
   const historyEntries = legacyItems.map((item) => {
     const legacyItem = item as LegacyHistoryItem;
     return {
@@ -138,27 +216,39 @@ async function migrateLegacyHistory(
     ...historyEntries,
   ];
 
-  if (backup && restoreBaseEntries) {
+  if (context.restoreBaseEntries) {
     // Discard any persisted prefix, retaining entries that predated the
     // legacy-history import (for example products migrated in this startup).
     useHistoryStore.setState({ entries: baseEntries });
-  } else if (!backup) {
-    const recovery: HistoryMigrationBackup = {
-      type: "open3dcalc-history-v2-backup",
-      source,
-      baseEntries,
-    };
-    // This write must complete before addEntry overwrites the shared key.
-    guardedStorage.setItem(MIGRATION_MARKER_KEY, JSON.stringify(recovery));
   }
 
   const expected: Array<Record<string, unknown>> = baseEntries.map((entry) => ({
     ...entry,
   }));
+  // Idempotent-merge guard: an entry already present is preserved as-is rather
+  // than duplicated. On resume the base entries can already contain a record
+  // this migration previously wrote (the interrupted run's durable prefix) or a
+  // record the user created after the interruption; copy-without-delete also
+  // means the legacy source still holds the same record. Skipping a known id
+  // keeps the union lossless and duplicate-free.
+  const seenIds = new Set(baseEntries.map((entry) => entry.id));
+  // Id-less half of the guard (F3): a legacy record without an id gets a
+  // GENERATED id on every run, so `seenIds` cannot match it. The stable content
+  // signature can, which is what keeps the merge idempotent for that shape too.
+  const seenSignatures = new Set(
+    baseEntries.map((entry) => entrySignature(entry)),
+  );
   for (const entry of entries) {
+    if (entry.id !== undefined) {
+      if (seenIds.has(entry.id)) continue;
+    } else if (seenSignatures.has(entrySignature(entry))) {
+      continue;
+    }
     const id = historyStore.addEntry(entry);
     const migrated = historyStore.getEntry(id);
     if (!migrated) return false;
+    if (entry.id !== undefined) seenIds.add(entry.id);
+    seenSignatures.add(entrySignature(migrated));
     expected.push({
       id,
       timestamp: entry.timestamp ?? migrated.timestamp,
@@ -251,17 +341,35 @@ async function migrateLegacyHistory(
     }
   }
 
-  if (backup?.productsSource !== undefined && productsFullyConvertible) {
+  if (context.productsSource !== undefined && productsFullyConvertible) {
     // Retain the independent source until product and history entries have
     // both passed the in-memory and persisted-wrapper verification above.
-    if (guardedStorage.getItem(PRODUCTS_KEY) === backup.productsSource) {
+    if (guardedStorage.getItem(PRODUCTS_KEY) === context.productsSource) {
       guardedStorage.removeItem(PRODUCTS_KEY);
     }
   }
 
-  // The original raw source is retained in the recovery marker until both the
-  // in-memory store and the persisted Zustand wrapper contain the full result.
-  guardedStorage.removeItem(MIGRATION_MARKER_KEY);
+  // W4.4: completion is recorded by REMOVING the value-free progress marker.
+  // No record content is ever written. A legacy PII marker consumed on this run
+  // is cleaned here too, only after the full set verified (§3.3).
+  guardedStorage.removeItem(MIGRATION_PROGRESS_KEY);
+  if (context.legacyMarker) {
+    guardedStorage.removeItem(MIGRATION_MARKER_KEY);
+  }
+
+  // T4.6: register a VALUE-FREE fingerprint of the source just committed so a
+  // later scan can disclose honestly whether the legacy source changed after
+  // this logical commit. Counts only — never a record value. A product source
+  // that was absent or dropped (fully converted) is recorded as `null`.
+  guardedStorage.setItem(
+    MIGRATION_FINGERPRINT_KEY,
+    migrationFingerprintValue(
+      legacyItems.length,
+      legacyProducts === undefined || productsFullyConvertible
+        ? null
+        : legacyProducts.length,
+    ),
+  );
   return true;
 }
 
@@ -271,35 +379,97 @@ function migrateLegacyData(): void {
   });
 }
 
+/**
+ * Resume a migration recorded by a LEGACY PII-bearing marker (an old build).
+ *
+ * Read compatibility only: the preimage lives in the marker's `source`, which
+ * is consumed here. The marker is cleared after the run verifies (§3.3) — the
+ * current code never writes it.
+ *
+ * MERGE, never reset: the marker's `baseEntries` is a STALE snapshot taken
+ * before the interruption. Resetting to it would discard every entry created
+ * after the interruption and would resurrect an entry the user deleted since.
+ * The base this resume preserves is therefore the store's CURRENT contents,
+ * exactly as `resumeFromLiveSource` does; the marker's embedded `source` is
+ * merged on top, deduplicated, so the final set is the lossless union.
+ */
+async function resumeFromLegacyMarker(
+  backup: HistoryMigrationBackup,
+): Promise<void> {
+  try {
+    const parsed = JSON.parse(backup.source) as unknown;
+    if (!Array.isArray(parsed)) return;
+    await migrateLegacyHistory(
+      parsed,
+      {
+        baseEntries: useHistoryStore.getState().entries,
+        ...(backup.productsSource === undefined
+          ? {}
+          : { productsSource: backup.productsSource }),
+        restoreBaseEntries: true,
+        legacyMarker: true,
+      },
+      parseArrayOrUndefined(backup.productsSource ?? null),
+    );
+  } catch (error) {
+    console.warn("Failed to recover open3dcalc_history_v2", error);
+  }
+}
+
+/**
+ * Resume a migration recorded by the value-free progress marker.
+ *
+ * Copy-without-delete guarantees the legacy source is still present, so the run
+ * re-reads it rather than trusting a stored preimage — which is what lets the
+ * marker be value-free. An unusable source clears the flag so it cannot stall
+ * startup forever.
+ */
+async function resumeFromLiveSource(): Promise<void> {
+  const parsed = parseArrayOrUndefined(guardedStorage.getItem(HISTORY_KEY));
+  if (parsed === undefined) {
+    guardedStorage.removeItem(MIGRATION_PROGRESS_KEY);
+    return;
+  }
+  const oldProducts = guardedStorage.getItem(PRODUCTS_KEY);
+  try {
+    await migrateLegacyHistory(
+      parsed,
+      {
+        // MERGE, never reset-to-empty: whatever the store already holds (the
+        // interrupted run's durable prefix, or records the user created after
+        // the interruption) is the base this resume preserves. The migration
+        // then adds the legacy records whose ids are not already present, so the
+        // final set is the lossless, duplicate-free union.
+        baseEntries: useHistoryStore.getState().entries,
+        ...(oldProducts === null ? {} : { productsSource: oldProducts }),
+        restoreBaseEntries: true,
+        legacyMarker: false,
+      },
+      parseArrayOrUndefined(oldProducts),
+    );
+  } catch (error) {
+    console.warn("Failed to recover open3dcalc_history_v2", error);
+  }
+}
+
 async function migrateLegacyDataAsync(): Promise<void> {
-  const migrationMarker = guardedStorage.getItem(MIGRATION_MARKER_KEY);
-  if (migrationMarker) {
-    const backup = isHistoryMigrationBackup(migrationMarker);
-    if (!backup) return;
-    try {
-      const parsed = JSON.parse(backup.source) as unknown;
-      if (Array.isArray(parsed)) {
-        let legacyProducts: unknown[] | undefined;
-        if (backup.productsSource !== undefined) {
-          try {
-            const parsedProducts = JSON.parse(backup.productsSource) as unknown;
-            if (Array.isArray(parsedProducts)) legacyProducts = parsedProducts;
-          } catch {
-            // Keep an unrecognized product source untouched while recovering
-            // the independently backed-up legacy history.
-          }
-        }
-        await migrateLegacyHistory(
-          parsed,
-          backup.source,
-          backup,
-          legacyProducts,
-          true,
-        );
-      }
-    } catch (error) {
-      console.warn("Failed to recover open3dcalc_history_v2", error);
-    }
+  // 1. A legacy PII-bearing marker (old build) is consumed for its preimage and
+  //    cleaned after verification. Read-only from the current code's side.
+  const legacyMarker = guardedStorage.getItem(MIGRATION_MARKER_KEY);
+  if (legacyMarker !== null) {
+    const backup = isHistoryMigrationBackup(legacyMarker);
+    if (backup) await resumeFromLegacyMarker(backup);
+    return;
+  }
+
+  // 2. The value-free progress marker: an interrupted run resumes from the
+  //    intact legacy source. It carries no PII, so there is nothing to scrub.
+  const progressMarker = guardedStorage.getItem(MIGRATION_PROGRESS_KEY);
+  if (
+    progressMarker !== null &&
+    isHistoryMigrationProgress(progressMarker) !== null
+  ) {
+    await resumeFromLiveSource();
     return;
   }
 
@@ -318,29 +488,23 @@ async function migrateLegacyDataAsync(): Promise<void> {
     try {
       const parsedHistory = JSON.parse(oldHistory) as unknown;
       if (Array.isArray(parsedHistory)) {
-        const recovery: HistoryMigrationBackup = {
-          type: "open3dcalc-history-v2-backup",
-          source: oldHistory,
-          baseEntries: historyStore.entries,
-          ...(oldProducts === null ? {} : { productsSource: oldProducts }),
-        };
-        // This durable snapshot must precede every write to the shared history
-        // key, including writes made while converting the legacy products.
-        guardedStorage.setItem(MIGRATION_MARKER_KEY, JSON.stringify(recovery));
-        let legacyProducts: unknown[] | undefined;
-        if (oldProducts !== null) {
-          try {
-            const parsedProducts = JSON.parse(oldProducts) as unknown;
-            if (Array.isArray(parsedProducts)) legacyProducts = parsedProducts;
-          } catch {
-            // The product source is preserved; continue recovering history.
-          }
-        }
+        // W4.4: the marker is VALUE-FREE. The raw source is NOT copied into it;
+        // copy-without-delete keeps `open3dcalc_history_v2` intact, so a resumed
+        // run re-reads it. This write still precedes every write to the shared
+        // history key, so an interrupted run is detected and resumed.
+        guardedStorage.setItem(
+          MIGRATION_PROGRESS_KEY,
+          historyMigrationProgressValue(),
+        );
         await migrateLegacyHistory(
           parsedHistory,
-          oldHistory,
-          recovery,
-          legacyProducts,
+          {
+            baseEntries: historyStore.entries,
+            ...(oldProducts === null ? {} : { productsSource: oldProducts }),
+            restoreBaseEntries: false,
+            legacyMarker: false,
+          },
+          parseArrayOrUndefined(oldProducts),
         );
         return;
       }

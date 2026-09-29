@@ -1,34 +1,36 @@
 /**
- * The `pii_stage` preimage must survive the 10 s stale-key sweep.
+ * The `pii_stage` preimage must survive the 10 s stale-key sweep — and the
+ * bridge must not carry any PII value into the renderer at all (Wave 3, T3.1).
+ *
+ * ## The structural hazard this file pins
  *
  * This is the whole reason the preimage lives in its own table instead of a row
  * in `storage`, and it is asserted here against the REAL bridge rather than a
- * description of it. `initPersistenceBridge()` registers a `setInterval` on
- * `AUTO_SAVE_INTERVAL_MS` (10 s) whose sweep (`deleteStaleKeys`) deletes every
- * `storage` key that is absent from renderer `localStorage`, and whose startup
- * pass (`loadFromDatabase`) materializes every manifest-ALLOWED `storage` row
- * into renderer `localStorage`. A preimage parked in `storage` therefore has
- * exactly two fates, both fatal:
+ * description of it. A preimage — or any PII value — parked in `storage` has
+ * exactly one fatal fate left after T3.1:
  *
- *   - its key is not in the renderer (an internal staging key) ⇒ the sweep
- *     DELETES it within one poll. Not a race; a certainty;
- *   - its key IS manifest-allowed ⇒ `loadFromDatabase` decrypts it and writes
- *     it into the renderer as PLAINTEXT, which is the exact mirror this
- *     remediation removes, recreated on the next launch.
+ *   - its key is not in the renderer (an internal staging key, or a PII key the
+ *     bridge no longer mirrors) ⇒ the sweep DELETES it within one poll. Not a
+ *     race; a certainty.
  *
- * Both fates are demonstrated in the SAME test run, from the SAME sweep, as
- * controls: a non-manifest `storage` row is gone after one interval, and a
- * manifest-allowed `storage` row is sitting in `localStorage` decrypted. The
- * `pii_stage` row, written through the real `stagePreimage`, is untouched by
- * both.
+ * Before T3.1 there was a second fate: a manifest-ALLOWED `storage` row was
+ * decrypted into renderer `localStorage` as PLAINTEXT by the startup pass. That
+ * is the plaintext mirror Wave 3 removes, and it is now asserted as ABSENT: the
+ * manifest-allowed PII row's stored bytes are REWRITTEN AS PLAINTEXT by the
+ * legacy writer, but the renderer NEVER holds the decrypted value, and the
+ * sweep NEVER destroys the row. The row is retained (copy-without-delete) and
+ * the renderer copy is refused.
+ *
+ * The `pii_stage` row, written through the real `stagePreimage`, is untouched
+ * by both.
  *
  * The `electronAPI.db` seam is backed by REAL better-sqlite3 over a real
  * temporary file migrated by the app's own runner, and every statement it runs
  * is the statement `electron/main.ts` runs for the same IPC channel
  * (`db:load` :230, `db:save` :249, `db:delete` :271, `db:list-keys` :286).
  * `load` additionally mirrors `loadGated`'s contract — a PII row stored as an
- * `enc1:` envelope is handed back decrypted — because that decryption is the
- * second half of the hazard and the test has to see it.
+ * `enc1:` envelope is handed back decrypted — because the IPC surface still
+ * decrypts on the way out and the bridge is what must refuse to mirror it.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -203,28 +205,39 @@ describe("pii_stage vs. the 10 s persistence-bridge sweep", () => {
   it("leaves the staged preimage intact while a storage-table stage is destroyed", async () => {
     await initPersistenceBridge();
 
-    // FATE 2, already visible at startup: the manifest-allowed `storage` row is
-    // decrypted into the renderer as plaintext before any interval fires. This
-    // is the mirror the remediation exists to remove.
-    expect(localStorage.getItem(ALLOWED_KEY)).toBe(MARKER);
+    // T3.1 ABSENCE ASSERTION. The manifest-allowed PII row must NOT be mirrored
+    // into the renderer. Before Wave 3 this line read `toBe(MARKER)` — the
+    // plaintext mirror the remediation removes — so this is the exact inversion
+    // the task calls for: prove NO PII plaintext is rehydrated.
+    expect(localStorage.getItem(ALLOWED_KEY)).toBeNull();
 
-    // FATE 1: one 10 s cycle, and the internal `storage` row is gone.
+    // FATE: one 10 s cycle, and the internal `storage` row is gone.
     await vi.advanceTimersByTimeAsync(10_000);
     expect(storedValue(INTERNAL_KEY)).toBeNull();
 
+    // The manifest-allowed PII row is RETAINED (copy-without-delete): the
+    // sweep must not destroy a row the app may still need, even though the
+    // renderer never holds it.
+    expect(storedValue(ALLOWED_KEY)).not.toBeNull();
+
     // The staged preimage: still there, byte for byte, and never materialized
     // in the renderer. The renderer holds only what the app is entitled to hold
-    // (the manifest-allowed control, plus the `open3dcalc_theme` row migration
-    // 0001 seeds) — nothing stage-related, and no sealed envelope anywhere.
+    // (the `open3dcalc_theme` row migration 0001 seeds) — nothing stage-related,
+    // and no sealed envelope anywhere.
     expect(storedStageBlob()).toBe(SEALED);
     expect(stageRowCount()).toBe(1);
     expect(Object.keys(localStorage)).not.toContain("pii_stage");
     expect(Object.keys(localStorage).join(",")).not.toContain("tx-0001");
     for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i) ?? "";
       expect(
-        localStorage.getItem(localStorage.key(i) ?? ""),
-        `renderer key ${localStorage.key(i)} must not hold the sealed preimage`,
+        localStorage.getItem(key),
+        `renderer key ${key} must not hold the sealed preimage`,
       ).not.toBe(SEALED);
+      expect(
+        localStorage.getItem(key),
+        `renderer key ${key} must not hold decrypted PII`,
+      ).not.toBe(MARKER);
     }
   });
 
@@ -253,8 +266,9 @@ describe("pii_stage vs. the 10 s persistence-bridge sweep", () => {
     // `deleteStaleKeys` iterates `db().listKeys()` — the `storage` keys. A
     // `storage`-backed stage is on that surface BY CONSTRUCTION, whether or not
     // the pass goes on to delete it, so the surface is checked on the VALUE:
-    // which keys hold the sealed preimage. The only ones allowed to are the two
-    // controls this test inserted itself.
+    // which keys hold the sealed preimage. The only one allowed to is the
+    // control this test inserted itself (the internal key; it is not a stage and
+    // the sweep removes it).
     //
     // Asserting on key NAMES cannot do this, and the reason is worth recording:
     // no `storage` key is ever literally called "pii_stage", so
@@ -267,13 +281,48 @@ describe("pii_stage vs. the 10 s persistence-bridge sweep", () => {
     await initPersistenceBridge();
     expect(await preimageHolders()).toEqual([ALLOWED_KEY, INTERNAL_KEY]);
 
-    // One cycle later the preimage is nowhere on the surface the sweep walks:
-    // control A is deleted (fate 1) and control B's row has been REWRITTEN as
-    // plaintext by `saveToDatabase`, which mirrors the renderer copy the
-    // startup pass just decrypted (fate 2, completing). Neither control is a
-    // stage, and a stage adds a third holder before the sweep even runs.
+    // One cycle later the preimage is nowhere on the surface the sweep walks
+    // as a DECRYPTED value: control A is deleted, and control B is REWRITTEN
+    // as plaintext by `saveToDatabase` (it mirrors the row's stored bytes, not
+    // the decrypted value it was handed). Crucially, no control is a stage, and
+    // a stage adds a third holder before the sweep even runs — so the sweep sees
+    // nothing it should not, and the renderer still holds no PII.
     await vi.advanceTimersByTimeAsync(10_000);
     const holders = await preimageHolders();
-    expect(holders).toEqual([]);
+    // The PII row is retained with its sealed bytes; only the internal control
+    // (not a stage, not PII) is deleted.
+    expect(holders).toEqual([ALLOWED_KEY]);
+    // T3.1: no PII was rehydrated from the decrypted IPC payload.
+    expect(localStorage.getItem(ALLOWED_KEY)).toBeNull();
+    expect(localStorage.getItem(ALLOWED_KEY)).not.toBe(MARKER);
+  });
+
+  it("retains the manifest-allowed PII row while never re-materializing it", async () => {
+    // T3.2: a PII `storage` row is NOT stale merely because the renderer has no
+    // counterpart — the bridge refuses to mirror it, and the sweep must read
+    // that refusal as a refusal, not as deletion evidence. The row is retained
+    // (copy-without-delete) with its stored bytes untouched (the sweep writes
+    // nothing back; it has no business rewriting a row it refuses to hydrate).
+    await initPersistenceBridge();
+    expect(storedValue(ALLOWED_KEY)).toBe(SEALED);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    // Retained, byte for byte.
+    expect(storedValue(ALLOWED_KEY)).toBe(SEALED);
+    // And still not materialized in the renderer.
+    expect(localStorage.getItem(ALLOWED_KEY)).toBeNull();
+  });
+
+  it("never writes a decrypted PII value even when the IPC load returns one", async () => {
+    // T3.1, the rehydration half. The `db:load` seam here returns the marker
+    // DECRYPTED for the manifest-allowed PII key (exactly what `loadGated` does
+    // on the way out). Before Wave 3 the bridge wrote that returned string
+    // straight into localStorage; after Wave 3 it must be refused, because the
+    // value came back decrypted and the renderer is not entitled to it.
+    await initPersistenceBridge();
+    expect(localStorage.getItem(ALLOWED_KEY)).toBeNull();
+    // And the row is still on disk, retained for the encrypted adapter to read.
+    expect(storedValue(ALLOWED_KEY)).not.toBeNull();
   });
 });

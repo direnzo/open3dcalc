@@ -18,6 +18,7 @@ interface ManifestKey {
   key: string;
   surface: string;
   platforms: string[];
+  pii?: boolean;
 }
 
 const manifestPath = path.resolve(
@@ -27,16 +28,40 @@ const manifestPath = path.resolve(
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
   keys: ManifestKey[];
 };
+/**
+ * The keys the bridge migrates/hydrates: manifest-allowed, localStorage surface,
+ * electron, and NOT PII.
+ *
+ * Wave 3 (T3.1): a PII key is refused wholesale by the bridge, so the "allowed
+ * renderer keys" set is exactly the non-PII subset. Deriving it from the
+ * manifest's `pii` flag keeps this spec honest against the manifest rather than
+ * against a hand-maintained list — and it is the same classification the
+ * bridge's own denylist mirrors.
+ */
 const ALLOWED_RENDERER_KEYS = manifest.keys
   .filter(
-    ({ key, surface, platforms }) =>
+    ({ key, surface, platforms, pii }) =>
       key.startsWith("open3dcalc_") &&
       surface === "localStorage" &&
-      platforms.includes("electron"),
+      platforms.includes("electron") &&
+      pii !== true,
   )
   .map(({ key }) => key)
   .filter(isKeyAllowed)
   .sort();
+
+/** Every manifest PII key on the renderer surface: none may be mirrored. */
+const PII_RENDERER_KEYS = manifest.keys
+  .filter(
+    ({ key, surface, platforms, pii }) =>
+      key.startsWith("open3dcalc_") &&
+      surface === "localStorage" &&
+      platforms.includes("electron") &&
+      pii === true,
+  )
+  .map(({ key }) => key)
+  .sort();
+
 const UNKNOWN_KEY = "open3dcalc_synthetic_unknown";
 const FIRST_BRIDGE_KEY = "open3dcalc_settings_v2";
 const FIXED_TIME = 1_700_000_123_456;
@@ -208,6 +233,14 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     expect(postimage).toEqual(expectedRows);
     expect(postimage.map(({ key }) => key)).toEqual(ALLOWED_RENDERER_KEYS);
     expect(postimage.some(({ key }) => key === UNKNOWN_KEY)).toBe(false);
+    // T3.1: no PII key is among the rows the bridge wrote. It never even
+    // attempted them, which is why the population is exactly the non-PII set.
+    for (const pii of PII_RENDERER_KEYS) {
+      expect(
+        postimage.some(({ key }) => key === pii),
+        `${pii} must not be written by the bridge`,
+      ).toBe(false);
+    }
     expect(sqlite.$client.pragma("integrity_check", { simple: true })).toBe(
       "ok",
     );

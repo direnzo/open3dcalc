@@ -29,6 +29,13 @@
  * it only gates the one-shot `open3dcalc:db-error` dispatch, which no spec in
  * this file asserts on, so a reset seam for it would be a test-only export
  * guarding nothing.
+ *
+ * Wave 3 (T3.1): the population is all NON-PII. A PII key is never collected by
+ * the bridge any more — it is refused wholesale and not saved — so a spec that
+ * seeded a PII key and expected it to be ATTEMPTED would be asserting the
+ * plaintext mirror this wave removes. The quarantine semantics under test are
+ * "a refused key costs one key, not the rest", and the refusal is now modelled
+ * on a non-PII key (an unforeseen `db:save` failure behaves identically).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,15 +46,13 @@ import {
   PersistenceSaveError,
 } from "../persistence-bridge";
 
-/** A PII key: the class the ADR-002 quarantine regime refuses writes to. */
-const QUARANTINED_KEY = "open3dcalc_customers_v1";
-const ALSO_REFUSED_KEY = "open3dcalc_quotes_v1";
+/** The key whose write is refused: the cost is this key, never the tail. */
+const QUARANTINED_KEY = "open3dcalc_catalog_v1";
+const ALSO_REFUSED_KEY = "open3dcalc_filaments";
 const EARLIER_KEY = "open3dcalc_settings_v2";
-/** Keys the bridge writes AFTER the quarantined one. */
+/** Keys the bridge writes AFTER the refused one. */
 const LATER_KEYS = [
-  "open3dcalc_history_v2",
-  "open3dcalc_catalog_v1",
-  "open3dcalc_filaments",
+  "open3dcalc_color_palette_v1",
   "open3dcalc_dashboard_v1",
   "open3dcalc_theme",
 ];
@@ -61,6 +66,9 @@ function denied(reason: string): Error {
     reason,
   });
 }
+
+/** A refused write for a reason the bridge does not special-case. */
+const REFUSED = "quarantined_read_only";
 
 interface DbStub {
   /** Keys `save` was called with, in call order. */
@@ -83,7 +91,7 @@ function stubElectronDb(shouldRefuse: (key: string) => boolean): DbStub {
     load: vi.fn<(key: string) => Promise<string | null>>(async () => null),
     save: vi.fn(async (key: string) => {
       attempts.push(key);
-      if (shouldRefuse(key)) throw denied("quarantined_read_only");
+      if (shouldRefuse(key)) throw denied(REFUSED);
     }),
     delete: remove,
     listKeys,
@@ -195,9 +203,7 @@ describe("persistence bridge — a refused key fails the pass, not the loop", ()
     for (const { error } of aggregate.failures) {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).name).toBe("CryptoDeniedError");
-      expect((error as { reason?: string }).reason).toBe(
-        "quarantined_read_only",
-      );
+      expect((error as { reason?: string }).reason).toBe(REFUSED);
     }
     expect(aggregate.message).toContain(QUARANTINED_KEY);
     expect(aggregate.message).toContain(ALSO_REFUSED_KEY);
@@ -236,5 +242,43 @@ describe("persistence bridge — a refused key fails the pass, not the loop", ()
     );
 
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("never attempts to save a migrated PII key, even when it is in localStorage", async () => {
+    // T3.1, the save half. A stale plaintext PII key may well be sitting in the
+    // renderer (pre-remediation residue), and `collectLocalStorageEntries`
+    // enumerates by `open3dcalc_` prefix. The bridge must refuse it by KEY, so
+    // no `db:save` is ever issued for it and the residue is not re-committed as
+    // the authoritative row. The migrated PII key is not in the SEEDED set, so
+    // the population must be exactly the non-PII keys.
+    const stub = stubElectronDb(() => false);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    for (const pii of [
+      "open3dcalc_customers_v1",
+      "open3dcalc_quotes_v1",
+      "open3dcalc_history_v2",
+      "open3dcalc_migration_done_v2",
+    ]) {
+      localStorage.setItem(pii, JSON.stringify({ plaintext: pii }));
+    }
+    await initPersistenceBridge();
+    armed = true;
+
+    window.dispatchEvent(new Event("beforeunload"));
+    await vi.waitFor(() =>
+      expect(stub.attempts).toEqual(expect.arrayContaining(SEEDED)),
+    );
+
+    for (const pii of [
+      "open3dcalc_customers_v1",
+      "open3dcalc_quotes_v1",
+      "open3dcalc_history_v2",
+      "open3dcalc_migration_done_v2",
+    ]) {
+      expect(
+        stub.attempts,
+        `${pii} must not be saved by the bridge`,
+      ).not.toContain(pii);
+    }
   });
 });

@@ -131,6 +131,36 @@ export class ManifestUnavailableError extends Error {
  * load ever fails and the signal would otherwise never be raised. Idempotent in
  * effect (the latch holds one entry; re-announcing is harmless).
  */
+/**
+ * Announce the `open3dcalc:pii-unavailable` class on BOTH `document` and
+ * `window`.
+ *
+ * ## Why two events, not one event dispatched twice
+ *
+ * The DOM `dispatchEvent` contract: an event object carries an internal
+ * "dispatch flag" while it is being dispatched and it is NOT cleared
+ * afterwards. Re-dispatching the SAME object is a silent no-op — the second
+ * call does nothing and the second target's listeners never run. So the
+ * obvious "dispatch once on document, once on window" with one shared
+ * `CustomEvent` reaches only the FIRST target: a subscriber on `window` (a
+ * React component, a plain listener — anywhere but `document`) never hears the
+ * announcement, which is exactly the failure this dispatch pattern was written
+ * to avoid.
+ *
+ * A fresh event per target is the fix, and it is why this is a helper rather
+ * than an inline pair: two call sites needed it, and the bug is invisible
+ * (both dispatches look correct) unless you know the flag rule.
+ */
+function announcePiiUnavailable(entries: UnavailableEntry[]): void {
+  if (typeof document === "undefined") return;
+  const make = (): CustomEvent =>
+    new CustomEvent("open3dcalc:pii-unavailable", {
+      detail: { unavailable: entries },
+    });
+  document.dispatchEvent(make());
+  window.dispatchEvent(make());
+}
+
 function reportManifestUnavailable(): void {
   const entry: UnavailableEntry = {
     key: MANIFEST_UNAVAILABLE_KEY,
@@ -141,15 +171,7 @@ function reportManifestUnavailable(): void {
   console.warn(
     `[persistence-bridge] ${MANIFEST_UNAVAILABLE_REASON} — no key could be classified`,
   );
-  if (typeof document !== "undefined") {
-    const event = new CustomEvent("open3dcalc:pii-unavailable", {
-      detail: { unavailable: [entry] },
-    });
-    // On both, for the same reason as `loadFromDatabase`: a `document`-only
-    // dispatch never reaches a `window` listener (bubbles defaults to false).
-    document.dispatchEvent(event);
-    window.dispatchEvent(event);
-  }
+  announcePiiUnavailable([entry]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -157,11 +179,31 @@ function reportManifestUnavailable(): void {
 /*  (Keep in sync with all stores, components, and migration logic)     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The keys the bridge migrates, hydrates and saves.
+ *
+ * ## Wave 3 (T3.1): PII keys are deliberately absent
+ *
+ * A PII value must never cross into renderer `localStorage`, and this list is
+ * the surface that did it. The three migrated browser PII keys —
+ * `open3dcalc_customers_v1`, `open3dcalc_quotes_v1`, `open3dcalc_history_v2` —
+ * used to be here, which meant `loadFromDatabase` wrote the main process's
+ * DECRYPTED output straight into the renderer and `saveToDatabase` rewrote the
+ * row as plaintext. They are now persisted EXCLUSIVELY through the encrypted
+ * vault (`piiStoreHydration.ts` rehydrates them from IndexedDB after unlock),
+ * so the bridge must not touch them at all.
+ *
+ * The recovery marker `open3dcalc_migration_done_v2` is PII-bearing (its value
+ * embeds the raw pre-migration history) and is also gone from this list: it is
+ * read-only legacy input, and re-materializing it on every startup was the
+ * self-sustaining exposure the plan records. It survives in the `storage`
+ * table, retained but never mirrored into the renderer.
+ *
+ * What remains are preferences and UI state: `pii:false`, plaintext allowed.
+ * They are not PII and keep their localStorage mirror.
+ */
 const LOCALSTORAGE_KEYS = [
   "open3dcalc_settings_v2",
-  "open3dcalc_history_v2",
-  "open3dcalc_customers_v1",
-  "open3dcalc_quotes_v1",
   "open3dcalc_catalog_v1",
   "open3dcalc_filaments",
   "open3dcalc_color_palette_v1",
@@ -169,10 +211,33 @@ const LOCALSTORAGE_KEYS = [
   "open3dcalc_tutorial_v1",
   "open3dcalc_onboarded",
   "open3dcalc_dashboard_v1",
-  "open3dcalc_migration_done_v2",
   "open3dcalc_sections",
   "open3dcalc_theme",
 ] as const;
+
+/**
+ * Keys the bridge must never write into, or read out of, the renderer.
+ *
+ * These are the migrated PII keys and the PII-bearing recovery marker. The
+ * explicit list is what makes the refusal independent of the manifest's `pii`
+ * flag: the bridge denies on the KEY, so a manifest that lost or mis-declared
+ * an entry cannot reopen the plaintext path. See `isPiiBridgeKey`.
+ */
+const PII_BRIDGE_KEYS = new Set<string>([
+  "open3dcalc_customers_v1",
+  "open3dcalc_quotes_v1",
+  "open3dcalc_history_v2",
+  "open3dcalc_migration_done_v2",
+]);
+
+/**
+ * True for a key whose value must never reach the renderer through this bridge.
+ *
+ * Key NAMES only — the reason this is a set and not a value inspection (§3.2).
+ */
+function isPiiBridgeKey(key: string): boolean {
+  return PII_BRIDGE_KEYS.has(key);
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -203,7 +268,7 @@ function collectLocalStorageEntries(): Array<[string, string]> {
   const seen = new Set<string>();
 
   const collect = (key: string): void => {
-    if (seen.has(key) || !isKeyAllowed(key)) return;
+    if (seen.has(key) || isPiiBridgeKey(key) || !isKeyAllowed(key)) return;
     const raw = localStorage.getItem(key);
     if (raw === null) return;
     seen.add(key);
@@ -313,6 +378,15 @@ async function loadFromDatabase(): Promise<void> {
   for (const key of keys) {
     // SPEC-01 gate: unknown keys are never materialized locally.
     if (!isKeyAllowed(key)) continue;
+    // T3.1: a PII key is never materialized into the renderer — not decrypted,
+    // and not as raw ciphertext either. Its bytes belong to the encrypted
+    // adapter (Electron) or the browser vault, never to `localStorage`. The row
+    // is still RECORDED as an outcome so the sweep can tell a refusal from
+    // staleness and preserve it (copy-without-delete); see `deleteStaleKeys`.
+    if (isPiiBridgeKey(key)) {
+      hydrationOutcomes.set(key, "not_hydrated");
+      continue;
+    }
     try {
       const raw = await db().load(key);
       if (raw !== null && raw !== undefined) {
@@ -356,18 +430,13 @@ async function loadFromDatabase(): Promise<void> {
         unavailable.map((u) => `${u.key} (${u.reason})`).join(", "),
     );
     if (typeof document !== "undefined") {
-      // On BOTH `document` and `window`. The `document`-only dispatch is what
-      // made this unobservable in practice: jsdom's `CustomEvent` defaults
-      // `bubbles` to false, and a non-bubbling event dispatched on `document`
-      // never reaches a listener registered on `window` — which is where a
-      // React component or a plain subscriber would sit. The event is announced,
-      // not silently skipped, and an announcement nobody can receive is the same
-      // as no announcement.
-      const event = new CustomEvent("open3dcalc:pii-unavailable", {
-        detail: { unavailable },
-      });
-      document.dispatchEvent(event);
-      window.dispatchEvent(event);
+      // On BOTH `document` and `window`, each with a FRESH event — see
+      // `announcePiiUnavailable` for why one shared event cannot reach the
+      // second target. A React component or a plain subscriber sits on
+      // `window`, so a `document`-only dispatch (or a same-instance re-dispatch)
+      // makes the announcement unreceivable, which is the same as no
+      // announcement.
+      announcePiiUnavailable(unavailable);
     }
   }
 
@@ -546,6 +615,17 @@ async function deleteStaleKeys(): Promise<void> {
         continue;
       }
 
+      // T3.1/T3.2: a PII key is never materialized by this bridge, so its
+      // absence from localStorage is BY DESIGN and can never be read as
+      // staleness. This is checked on the KEY against the bridge's own explicit
+      // denylist, not on the manifest's `pii` flag: the manifest is the
+      // classification source, but the bridge must not depend on a declaration
+      // that could be reverted. `pii_stage` is in a dedicated table the sweep
+      // never enumerates, so it is exempt structurally as well.
+      if (isPiiBridgeKey(dbKey)) {
+        continue;
+      }
+
       // Everything else fails closed, because a MISSING record is no more proof
       // of staleness than a refusal is. A record is missing for either of two
       // reasons:
@@ -580,6 +660,17 @@ async function deleteStaleKeys(): Promise<void> {
   } catch (error) {
     console.warn("[persistence-bridge] Failed to clean stale keys:", error);
   }
+}
+
+/**
+ * Test-only seam: read the bridge's PII denylist.
+ *
+ * Exported so the T3.1/T3.2 spec can assert, as data, that every migrated PII
+ * key is on the list — a future edit that removes one fails there rather than
+ * silently reopening the plaintext mirror.
+ */
+export function piiBridgeKeysForTests(): readonly string[] {
+  return [...PII_BRIDGE_KEYS];
 }
 
 /**

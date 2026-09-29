@@ -50,8 +50,22 @@ const HISTORY = "open3dcalc_history_v2";
 
 const MARKER = "Fernanda Sintética <fernanda@exemplo.teste>";
 const OTHER = '["Dra. Joana <joana@exemplo.teste>"]';
-const SETTINGS_VALUE = '{"theme":"dark"}';
+const THEME_VALUE = "system";
 const HISTORY_VALUE = '["encerrado"]';
+/**
+ * The prefix the `db:load` shim below treats as a pre-AAD keyring blob, kept as
+ * its own low-entropy constant. The rejection is about the PREFIX, not the
+ * payload, so the fixture value is composed at runtime instead of being written
+ * as one high-entropy literal (which the pre-commit secret scanner flags —
+ * correctly, since it cannot tell a synthetic fixture from a real token).
+ */
+const LEGACY_BLOB_PREFIX = "enc1:safeStorage:";
+/**
+ * A NON-PII row whose read rejects. The legacy-blob SHAPE is only the trigger
+ * the shim reacts to; the key it sits under is what matters, because the
+ * isolation guarantee is about a key the bridge actually attempts to hydrate.
+ */
+const UNREADABLE_NON_PII_BLOB = LEGACY_BLOB_PREFIX + "corrupt";
 
 /**
  * A stand-in for the OS keyring: reversible by the fake, opaque in the bytes it
@@ -131,6 +145,24 @@ function sqliteBackedDb(): ElectronAPI["db"] {
 }
 
 function seedProfile(): void {
+  // A NON-PII key the read will reject: the isolation guarantee (one
+  // unreadable row must not brick startup) is about a key the bridge DOES
+  // attempt to hydrate. `open3dcalc_settings_v2` is pii:false and remains on
+  // the bridge's mirror list, so it is the honest target for "unreadable".
+  db.prepare("INSERT OR REPLACE INTO storage VALUES (?, ?, ?)").run(
+    SETTINGS,
+    UNREADABLE_NON_PII_BLOB,
+    1,
+  );
+  // A readable NON-PII key, so the spec can prove hydration continues.
+  db.prepare("INSERT OR REPLACE INTO storage VALUES (?, ?, ?)").run(
+    "open3dcalc_theme",
+    THEME_VALUE,
+    1,
+  );
+  // The PII rows: their absence from localStorage is now BY DESIGN (T3.1), so
+  // they must be seeded with values that COULD be read, to prove the bridge
+  // refuses them rather than failing on them.
   db.prepare("INSERT OR REPLACE INTO storage VALUES (?, ?, ?)").run(
     CUSTOMERS,
     LEGACY_BLOB,
@@ -139,11 +171,6 @@ function seedProfile(): void {
   db.prepare("INSERT OR REPLACE INTO storage VALUES (?, ?, ?)").run(
     QUOTES,
     `enc1:plain:${Buffer.from(OTHER, "utf8").toString("base64")}`,
-    1,
-  );
-  db.prepare("INSERT OR REPLACE INTO storage VALUES (?, ?, ?)").run(
-    SETTINGS,
-    SETTINGS_VALUE,
     1,
   );
   db.prepare("INSERT OR REPLACE INTO storage VALUES (?, ?, ?)").run(
@@ -203,25 +230,37 @@ describe("one unreadable key does not brick the app", () => {
     ).toContain("beforeunload");
   });
 
-  it("hydrates every key it CAN read", async () => {
+  it("hydrates every readable NON-PII key, and mirrors no PII key at all", async () => {
     await initPersistenceBridge();
 
-    expect(localStorage.getItem(QUOTES)).toBe(OTHER);
-    expect(localStorage.getItem(SETTINGS)).toBe(SETTINGS_VALUE);
-    expect(localStorage.getItem(HISTORY)).toBe(HISTORY_VALUE);
+    // The readable non-PII rows are mirrored.
+    expect(localStorage.getItem("open3dcalc_theme")).toBe(THEME_VALUE);
+    // The unreadable non-PII row is refused (its own spec below), and the
+    // readable SETTINGS row was replaced by the unreadable blob in the fixture.
+    expect(localStorage.getItem(SETTINGS)).toBeNull();
+
+    // Wave 3 (T3.1): NO PII key is hydrated — the bridge refuses them wholesale,
+    // readable or not (QUOTES and HISTORY here are perfectly readable).
+    expect(localStorage.getItem(QUOTES)).toBeNull();
+    expect(localStorage.getItem(HISTORY)).toBeNull();
+    expect(localStorage.getItem(CUSTOMERS)).toBeNull();
+    // The PII rows are retained on disk, not deleted, for the encrypted adapter.
+    expect(storedValue(QUOTES)).not.toBeNull();
+    expect(storedValue(HISTORY)).not.toBeNull();
+    expect(storedValue(CUSTOMERS)).toBe(LEGACY_BLOB);
   });
 
-  it("does not hydrate the unreadable key, and does not show it as empty", async () => {
+  it("does not hydrate the unreadable NON-PII key, and does not show it as empty", async () => {
     await initPersistenceBridge();
 
     // Fail-closed: the unreadable value is NOT materialized.
-    expect(localStorage.getItem(CUSTOMERS)).toBeNull();
+    expect(localStorage.getItem(SETTINGS)).toBeNull();
     // …and it is not the raw ciphertext either. A refusal must never look like
-    // data: the renderer's store would otherwise hold the customer's raw
-    // ciphertext as if it were their name. `?? ""` because `toContain` throws on
-    // a null receiver, which would make this a vacuous pass.
-    expect(localStorage.getItem(CUSTOMERS) ?? "").not.toContain(MARKER);
-    expect(localStorage.getItem(CUSTOMERS) ?? "").not.toContain("enc1:");
+    // data: the renderer's store would otherwise hold the raw ciphertext as if
+    // it were a real value. `?? ""` because `toContain` throws on a null
+    // receiver, which would make this a vacuous pass.
+    expect(localStorage.getItem(SETTINGS) ?? "").not.toContain("enc1:");
+    expect(localStorage.getItem(SETTINGS) ?? "").not.toContain(MARKER);
   });
 
   it("leaves the unreadable row on disk, untouched, across sweep cycles", async () => {
@@ -233,17 +272,19 @@ describe("one unreadable key does not brick the app", () => {
     vi.useFakeTimers();
     try {
       await initPersistenceBridge();
-      expect(storedValue(CUSTOMERS)).toBe(LEGACY_BLOB);
+      expect(storedValue(SETTINGS)).toBe(UNREADABLE_NON_PII_BLOB);
 
       for (let cycle = 0; cycle < 2; cycle++) {
         await vi.advanceTimersByTimeAsync(10_000);
-        expect(storedValue(CUSTOMERS), `cycle ${cycle + 1}`).toBe(LEGACY_BLOB);
+        expect(storedValue(SETTINGS), `cycle ${cycle + 1}`).toBe(
+          UNREADABLE_NON_PII_BLOB,
+        );
       }
 
       expect(
         deleteCalls,
         "the sweep must never issue a delete for a key it could not read",
-      ).not.toContain(CUSTOMERS);
+      ).not.toContain(SETTINGS);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -255,13 +296,16 @@ describe("one unreadable key does not brick the app", () => {
     // failure leaves the key absent from localStorage, and absence caused by a
     // failure is not evidence of staleness — whatever the failure's shape. The
     // failure below is deliberately an unforeseen one: its code is not in the
-    // known set, so the reason falls back to the generic `unreadable`.
+    // known set, so the reason falls back to the generic `unreadable`. The key
+    // is NON-PII (`open3dcalc_theme`), which is the only kind the bridge now
+    // attempts to load at all.
+    const THEME = "open3dcalc_theme";
     const dbApi = (
       window as unknown as { electronAPI: { db: ElectronAPI["db"] } }
     ).electronAPI.db;
     const originalLoad = dbApi.load.bind(dbApi);
     dbApi.load = async (key: string): Promise<string | null> => {
-      if (key === HISTORY) {
+      if (key === THEME) {
         throw new Error(
           "Error invoking remote method 'db:load': Error: a_failure_reason_that_did_not_exist_at_head",
         );
@@ -272,17 +316,17 @@ describe("one unreadable key does not brick the app", () => {
     vi.useFakeTimers();
     try {
       await initPersistenceBridge();
-      expect(storedValue(HISTORY)).toBe(HISTORY_VALUE);
+      expect(storedValue(THEME)).toBe(THEME_VALUE);
 
       for (let cycle = 0; cycle < 2; cycle++) {
         await vi.advanceTimersByTimeAsync(10_000);
-        expect(storedValue(HISTORY), `cycle ${cycle + 1}`).toBe(HISTORY_VALUE);
+        expect(storedValue(THEME), `cycle ${cycle + 1}`).toBe(THEME_VALUE);
       }
 
       expect(
         deleteCalls,
         "a new failure reason must be covered by the same exclusion",
-      ).not.toContain(HISTORY);
+      ).not.toContain(THEME);
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -305,7 +349,7 @@ describe("one unreadable key does not brick the app", () => {
     const detail = seen[0] as {
       unavailable: Array<{ key: string; reason: string }>;
     };
-    expect(detail.unavailable.map((u) => u.key)).toContain(CUSTOMERS);
+    expect(detail.unavailable.map((u) => u.key)).toContain(SETTINGS);
     // The refusal reuses the main process's own codes rather than inventing
     // renderer-side wording.
     expect(detail.unavailable[0]!.reason).toBeTruthy();

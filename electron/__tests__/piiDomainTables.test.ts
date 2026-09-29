@@ -35,7 +35,11 @@ import {
   type PayloadDb,
 } from "../erasurePayload.js";
 import { buildScanReport, summarizeReport } from "../legacyScan.js";
-import { PII_LEGACY_PLAINTEXT_TABLES } from "../piiDomainTables.js";
+import {
+  PII_DOMAIN_TABLES,
+  PII_LEGACY_PLAINTEXT_TABLES,
+  type PiiDomainTableCounts,
+} from "../piiDomainTables.js";
 import {
   createDiagnosticBackup,
   DiagnosticGateError,
@@ -496,5 +500,162 @@ describe("appdataFilesAdapter covers pre-import database copies", () => {
     await adapter.purge();
     expect(existsSync(backup)).toBe(false);
     expect(await adapter.rescan()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4.5 — the domain-table cleanup is GATED on COUNT > 0
+// ---------------------------------------------------------------------------
+
+/**
+ * A synthetic sealed preimage. Derived from the existing synthetic MARKER
+ * rather than hardcoded, so the file carries no high-entropy literal (and no
+ * secret scanner has to guess whether it is one).
+ */
+const SEALED_PREIMAGE = `enc1:envelope:${Buffer.from(MARKER, "utf8").toString("base64")}`;
+
+/**
+ * Wrap a live better-sqlite3 client so every SQL string the adapter prepares is
+ * recorded. The RECORDED STATEMENTS are the observable: "no delete is attempted
+ * at COUNT = 0" (T4.5 DoD) is a claim about which SQL the cleanup issues, and
+ * nothing else can prove it — the row count after a no-op `DELETE` on an empty
+ * table is identical to the row count after a skipped one.
+ */
+function recordingStorageDb(real: Database.Database): {
+  db: MinimalStorageDb;
+  statements: string[];
+} {
+  const statements: string[] = [];
+  const db: MinimalStorageDb = {
+    prepare(sql: string) {
+      statements.push(sql);
+      return real.prepare(sql);
+    },
+    exec(sql: string) {
+      real.exec(sql);
+    },
+  };
+  return { db, statements };
+}
+
+const isDelete = (sql: string): boolean => /^\s*DELETE\s+FROM\s+/i.test(sql);
+
+describe("sqliteDomainTablesAdapter T4.5 — cleanup gated on COUNT > 0", () => {
+  it("issues NO DELETE for a declared table whose COUNT is 0", async () => {
+    // `seedProfile` creates every declared table; `pii_stage` and
+    // `legacy_residue` are present but EMPTY, the four content tables each hold
+    // one row. Remove the `count === 0` guard in `erasureStores.ts` and this
+    // test fails: a `DELETE FROM pii_stage` is then recorded.
+    const { db: recording, statements } = recordingStorageDb(db);
+    const adapter = sqliteDomainTablesAdapter(recording);
+    await adapter.purge();
+
+    const deletes = statements.filter(isDelete);
+    for (const empty of ["pii_stage", "legacy_residue"]) {
+      expect(
+        deletes.some((s) => s.includes(empty)),
+        `${empty} is empty; it must not be issued a DELETE`,
+      ).toBe(false);
+    }
+    // The gate is per-table, not a blanket skip: every NON-empty table is
+    // still deleted.
+    for (const seeded of [
+      "customers",
+      "quotes",
+      "quote_items",
+      "history_entries",
+    ]) {
+      expect(
+        deletes.some((s) => s.includes(seeded)),
+        `${seeded} has rows; it must be deleted`,
+      ).toBe(true);
+    }
+  });
+
+  it("issues NO DELETE at all when every declared table is empty", async () => {
+    // The strongest form of the gate: a profile with no residue produces zero
+    // DELETE statements — and the rescan is still clean, so the gate does not
+    // weaken the §6 post-condition.
+    for (const table of EXPECTED_PII_TABLES) {
+      db.prepare(`DELETE FROM ${table}`).run();
+    }
+    const { db: recording, statements } = recordingStorageDb(db);
+    const adapter = sqliteDomainTablesAdapter(recording);
+    expect(await adapter.purge()).toBe(0);
+    expect(statements.some(isDelete)).toBe(false);
+    expect(await adapter.rescan()).toEqual([]);
+  });
+
+  it("still purges a table whose COUNT > 0 and reports the count before deletion", async () => {
+    // `pii_stage` holds a sealed preimage and `legacy_residue` a retained
+    // ciphertext: both are NON-empty, so the COUNT gate must NOT skip them —
+    // they are the residue the erasure exists to remove.
+    db.prepare(
+      "INSERT INTO pii_stage (transaction_id, generation, privacy_epoch, schema_version, envelope_version, state, blob, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("tx-1", 1, 1, 1, 1, "staged", SEALED_PREIMAGE, 1_700_000_000_000);
+    db.prepare(
+      "INSERT INTO legacy_residue (key, shape, blob, recovered_value_sha, recovered_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(
+      "open3dcalc_customers_v1",
+      "safeStorage",
+      SEALED_PREIMAGE,
+      "sha-1",
+      1_700_000_000_000,
+    );
+
+    const { db: recording, statements } = recordingStorageDb(db);
+    const adapter = sqliteDomainTablesAdapter(recording);
+    // Six tables now hold a row each.
+    expect(await adapter.purge()).toBe(6);
+    // The count is read for EVERY table — the gate reports before it deletes.
+    const counted = statements.filter((s) =>
+      /^\s*SELECT\s+COUNT\(\*\)/i.test(s),
+    );
+    for (const table of EXPECTED_PII_TABLES) {
+      expect(
+        counted.some((s) => s.includes(table)),
+        `${table} count must be read before the delete decision`,
+      ).toBe(true);
+    }
+    expect(await adapter.rescan()).toEqual([]);
+    for (const table of EXPECTED_PII_TABLES) {
+      const count = (
+        db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }
+      ).c;
+      expect(count, `${table} must be empty after purge`).toBe(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4.5 DoD — every table's count is reported, a nonzero count is a finding
+// ---------------------------------------------------------------------------
+
+describe("scan report (T4.5 DoD) — every declared table's count is named", () => {
+  it("names EVERY declared table, including the ones at zero", () => {
+    // "every table's count appears in the scan report": the summary enumerates
+    // the canonical list rather than only the nonzero rows, so a table at 0 is
+    // still visible and a table added later cannot go unreported.
+    const zeroCounts = Object.fromEntries(
+      PII_DOMAIN_TABLES.map((table) => [table, 0]),
+    ) as PiiDomainTableCounts;
+    const summary = summarizeReport(buildScanReport([], zeroCounts));
+    for (const table of PII_DOMAIN_TABLES) {
+      expect(summary).toContain(`${table}=0`);
+    }
+  });
+
+  it("surfaces a nonzero domain count as a finding, not a silent clear", () => {
+    const counts = Object.fromEntries(
+      PII_DOMAIN_TABLES.map((table) => [table, 0]),
+    ) as PiiDomainTableCounts;
+    counts.history_entries = 2;
+    const summary = summarizeReport(buildScanReport([], counts));
+    expect(summary).toContain("history_entries=2");
+    const domainRows = PII_LEGACY_PLAINTEXT_TABLES.reduce(
+      (total, table) => total + counts[table],
+      0,
+    );
+    expect(domainRows).toBeGreaterThan(0);
   });
 });

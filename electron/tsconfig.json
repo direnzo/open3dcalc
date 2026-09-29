@@ -23,6 +23,7 @@
     "preload.cts",
     "cryptoCapability.ts",
     "selftest/crypto-selftest.ts",
+    "selftest/packaged-probe.ts",
     "../src/shared/lib/crypto/**/*.ts",
     "../db/**/*.ts",
     "persistGate.ts",

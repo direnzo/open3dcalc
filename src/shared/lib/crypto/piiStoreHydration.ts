@@ -378,6 +378,15 @@ export function gatedPiiPersistStorage<S>(
  * state.
  */
 export async function rehydratePiiStores(): Promise<PiiRehydrateOutcome[]> {
+  // A read must not race an in-flight write for the same key. The vault
+  // serialises WRITES, but reads bypass that queue, so a store action's
+  // fire-and-forget write could still be committing when hydration reads the
+  // record — and hydration would restore the PRE-write value while every
+  // write promise still resolves successfully. Waiting for the write barrier
+  // first makes hydration read what the writes actually left behind, which is
+  // what "hydrate to the exact persisted state" means.
+  await whenPiiWritesSettled();
+
   const outcomes: PiiRehydrateOutcome[] = [];
 
   for (const key of PII_STORE_KEYS) {
@@ -423,6 +432,11 @@ export async function unlockPiiStoresAndRehydrate(
   options: PiiStoreOptions = {},
 ): Promise<PiiRehydrateOutcome[]> {
   configurePiiStoreRuntime(options);
+  // Unlock READS each record to recover its salt and to verify the passphrase,
+  // and reads are not serialised behind the write queue. Settle any write still
+  // in flight first, so the salt recovered is the one the committed record
+  // carries rather than a random one chosen because the record looked absent.
+  await whenPiiWritesSettled();
   for (const key of PII_STORE_KEYS) {
     await unlockPiiStore(key, passphrase, options);
   }

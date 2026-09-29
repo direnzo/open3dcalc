@@ -560,6 +560,29 @@ describe("PII vault: concurrent writers do not interleave", () => {
     expect(parsed.pad).toBe("x".repeat(200));
   });
 
+  it("commits writers in CALL order, so the last write issued wins", async () => {
+    const options = {
+      indexedDb: idb.factory,
+      environment: PII_STORE_ENVIRONMENT,
+    };
+    await unlockPiiStore(KEY, PASS, options);
+    const store = createPiiStore(KEY, options);
+
+    // The stale-write shape an action produces: a wide (slower to seal) value
+    // first, then a small one. Sealing before enqueueing makes commit order
+    // follow crypto-completion order, so the FIRST value seals last and lands
+    // last — a stale record over the newer one. Serialising the whole write
+    // makes call order the commit order.
+    const stale = `{"turn":"stale","pad":"${"x".repeat(2_000_000)}"}`;
+    const fresh = '{"turn":"fresh"}';
+
+    const first = store.write(stale);
+    const second = store.write(fresh);
+    await Promise.all([first, second]);
+
+    expect(await store.read()).toBe(fresh);
+  });
+
   it("never has two readwrite transactions open on the store at once", async () => {
     const options = {
       indexedDb: idb.factory,

@@ -252,10 +252,17 @@ const heldKeys = new Map<
  * an `await` of the cipher between opening a transaction and issuing its
  * `put` yields `TransactionInactiveError` — and two writers in flight at once
  * could interleave into a record neither of them wrote. The vault never holds a
- * transaction open across crypto: the seal is computed first, and only the
- * single `put` runs inside a transaction. The queue is the second half, and it
- * is what makes "at most one readwrite transaction open" a property rather
- * than a hope.
+ * transaction open across crypto: each queued task seals first and only then
+ * opens the single-`put` transaction. The queue is the second half, and it is
+ * what makes "at most one readwrite transaction open" a property rather than a
+ * hope.
+ *
+ * The queue also fixes the ORDER, not just the count. A write is enqueued at
+ * CALL time and seals inside its own slot, so commit order matches call order
+ * and the last write issued is the record that persists. Sealing before
+ * enqueueing (the previous shape) instead made commit order follow
+ * CRYPTO-COMPLETION order: two calls are independent WebCrypto operations,
+ * they can resolve out of order, and a stale earlier value could land last.
  */
 const writeQueues = new Map<string, Promise<unknown>>();
 
@@ -744,16 +751,24 @@ export function createPiiStore(
       }
       const idb = requirePort();
       const held = requireHeld();
-      // Seal outside the queue: the queue exists to serialise TRANSACTIONS,
-      // and holding one open across an `await` of the cipher is the
-      // auto-commit bug this whole shape is built to avoid.
-      const envelope = await seal(
-        held,
-        plaintext,
-        vaultExpectationFor(key),
-        held.salt,
-      );
+      // Seal INSIDE the per-key queue, so commit order matches call order.
+      //
+      // The two calls an action issues back to back ("clear, then add") are
+      // independent WebCrypto operations; awaiting the seal before entering the
+      // queue lets the SECOND seal resolve first, so the FIRST (stale) value is
+      // enqueued and committed last and wins. Sealing inside the queue makes
+      // "the last write issued is the record" a property rather than a hope.
+      //
+      // This does NOT hold a transaction open across the cipher: the seal runs
+      // first, and only the single `put` opens a transaction (see the queue's
+      // note above for the auto-commit footgun this preserves the avoidance of).
       await enqueue(key, async () => {
+        const envelope = await seal(
+          held,
+          plaintext,
+          vaultExpectationFor(key),
+          held.salt,
+        );
         try {
           await idb.put(key, envelope);
         } catch {

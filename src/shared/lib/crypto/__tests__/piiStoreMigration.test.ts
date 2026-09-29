@@ -303,7 +303,9 @@ describe("Wave 3 — PII stores on the vault", () => {
     // A store action performs `set(...)`; zustand's wrapped set calls
     // `storage.setItem` and ignores the promise. The action must not throw.
     expect(() => useHistoryStore.getState().setSearch("query")).not.toThrow();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The refusal is recorded synchronously, but the rejected write is a
+    // promise: await the gate's own write barrier rather than guessing a tick.
+    await whenPiiWritesSettled();
     expect(getLastPiiWriteRefusal()).toEqual({
       key: HISTORY,
       reason: "profile_locked",

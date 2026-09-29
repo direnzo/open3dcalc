@@ -954,6 +954,90 @@ describe("useAppInit tutorial auto-start", () => {
     expect(useHistoryStore.getState().entries).toEqual(expectedEntries);
   });
 
+  it("preserves entries added after an interruption when resuming from the live source", async () => {
+    const historyKey = "open3dcalc_history_v2";
+    const recoveryKey = "open3dcalc_migration_progress_v2";
+    const result = {
+      totalCost: 7,
+      sellPrice: 14,
+      profit: 7,
+      materialCost: 3,
+      energyCost: 0.5,
+      machineCost: 1,
+      hardwareCost: 0.5,
+      consumablesCost: 0,
+      laborCost: 1,
+      softwareCost: 0,
+      failureCost: 0,
+      extrasCost: 0,
+      postProcessingCost: 1,
+      subtotal: 7,
+      marketplaceFee: 0,
+      taxAmount: 0,
+      costPerGram: 0.14,
+      costPerUnit: 7,
+      unitWeight: 50,
+      estimatedPrintTime: 1,
+      targetMarginPercent: 50,
+      breakEvenPrice: 7,
+      actualMargin: 50,
+      carbonFootprintGrams: 2,
+    };
+    const legacy = (id: string, timestamp: number) => ({
+      id,
+      timestamp,
+      type: "fdm" as const,
+      summary: `Legado ${id}`,
+      totalCost: 7,
+      sellPrice: 14,
+      profit: 7,
+      result,
+      snapshot: null,
+    });
+    // The interrupted run left the value-free progress marker and the intact
+    // copy-without-delete source.
+    storageValues.set(
+      historyKey,
+      JSON.stringify([legacy("legacy-history-resume-01", 1_700_000_000_601)]),
+    );
+    storageValues.set(
+      recoveryKey,
+      JSON.stringify({ type: "open3dcalc-history-v2-progress", v: 1 }),
+    );
+
+    await unlockVault();
+
+    // Between the interruption and this resume the user created a history entry;
+    // it is already in the store (vault-hydrated) and must survive the resume.
+    const userEntry: HistoryEntry = {
+      id: "user-entry-after-interrupt",
+      timestamp: 1_700_000_900_000,
+      type: "fdm",
+      name: "Peça do usuário",
+      summary: "Peça do usuário",
+      totalCost: 5,
+      sellPrice: 10,
+      profit: 5,
+      result,
+      snapshot: null,
+    };
+    useHistoryStore.setState({ entries: [userEntry] });
+    await settleWrites();
+
+    renderHook(() => useAppInit(vi.fn()));
+    await vi.waitFor(() => expect(storageValues.has(recoveryKey)).toBe(false));
+    await settleWrites();
+
+    const entries = useHistoryStore.getState().entries;
+    const ids = entries.map((entry) => entry.id);
+    // Idempotent MERGE: the user's entry AND the legacy records are present,
+    // with no duplicate.
+    expect(ids).toContain("user-entry-after-interrupt");
+    expect(ids).toContain("legacy-history-resume-01");
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(entries).toHaveLength(2);
+  });
+
   it("consumes and clears a LEGACY PII marker, resuming from its embedded source", async () => {
     const historyKey = "open3dcalc_history_v2";
     const legacyMarkerKey = "open3dcalc_migration_done_v2";

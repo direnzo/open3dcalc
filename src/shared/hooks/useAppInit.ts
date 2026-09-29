@@ -185,10 +185,19 @@ async function migrateLegacyHistory(
   const expected: Array<Record<string, unknown>> = baseEntries.map((entry) => ({
     ...entry,
   }));
+  // Idempotent-merge guard: an entry already present is preserved as-is rather
+  // than duplicated. On resume the base entries can already contain a record
+  // this migration previously wrote (the interrupted run's durable prefix) or a
+  // record the user created after the interruption; copy-without-delete also
+  // means the legacy source still holds the same record. Skipping a known id
+  // keeps the union lossless and duplicate-free.
+  const seenIds = new Set(baseEntries.map((entry) => entry.id));
   for (const entry of entries) {
+    if (entry.id !== undefined && seenIds.has(entry.id)) continue;
     const id = historyStore.addEntry(entry);
     const migrated = historyStore.getEntry(id);
     if (!migrated) return false;
+    if (entry.id !== undefined) seenIds.add(entry.id);
     expected.push({
       id,
       timestamp: entry.timestamp ?? migrated.timestamp,
@@ -354,7 +363,12 @@ async function resumeFromLiveSource(): Promise<void> {
     await migrateLegacyHistory(
       parsed,
       {
-        baseEntries: [],
+        // MERGE, never reset-to-empty: whatever the store already holds (the
+        // interrupted run's durable prefix, or records the user created after
+        // the interruption) is the base this resume preserves. The migration
+        // then adds the legacy records whose ids are not already present, so the
+        // final set is the lossless, duplicate-free union.
+        baseEntries: useHistoryStore.getState().entries,
         ...(oldProducts === null ? {} : { productsSource: oldProducts }),
         restoreBaseEntries: true,
         legacyMarker: false,

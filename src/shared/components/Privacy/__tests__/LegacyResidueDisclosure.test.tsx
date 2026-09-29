@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import type { LegacyPiiDisclosure } from "@/shared/lib/migration/legacyPiiDisclosure";
 import { LEGACY_PII_REHOME_MARKER_KEY } from "@/shared/lib/migration/legacyPiiRehome";
@@ -250,5 +250,35 @@ describe("LegacyResidueDisclosure — default derivation", () => {
     expect(
       screen.getByRole("region", { name: "privacy.residue.title" }),
     ).toBeInTheDocument();
+  });
+
+  it("discloses the DESKTOP residue read over IPC", async () => {
+    // The bridge never hydrates the three PII keys, so the residue is in SQLite
+    // and only the read-only IPC answers. The panel must show it, key name and
+    // count only.
+    (window as unknown as { electronAPI: unknown }).electronAPI = {
+      privacy: {
+        legacyRows: async () => ({
+          scannedAt: new Date().toISOString(),
+          rows: [
+            {
+              key: "open3dcalc_customers_v1",
+              value: JSON.stringify({
+                state: { customers: [{ id: "a" }, { id: "b" }] },
+              }),
+              status: "legacy_plaintext",
+            },
+          ],
+        }),
+      },
+    };
+    try {
+      render(<LegacyResidueDisclosure />);
+      await waitFor(() =>
+        expect(screen.getByText(/open3dcalc_customers_v1/)).toBeInTheDocument(),
+      );
+    } finally {
+      delete (window as { electronAPI?: unknown }).electronAPI;
+    }
   });
 });

@@ -19,6 +19,7 @@ import {
   installPiiStoreRuntimeEnvironment,
   type PiiVaultAccessState,
 } from "@/shared/lib/crypto/piiStoreHydration";
+import { useLegacyPiiDisclosure } from "@/shared/hooks/useLegacyPiiDisclosure";
 
 /**
  * T5.3 — the honest, value-free legacy-residue disclosure panel.
@@ -78,9 +79,13 @@ export function LegacyResidueDisclosure({
   disclosure,
 }: LegacyResidueDisclosureProps = {}): ReactElement {
   const { t } = useTranslation();
+  // Desktop-aware live derivation: the hook merges the SQLite legacy rows
+  // (read-only, over IPC) over `localStorage`. It is disabled when a caller
+  // injects its own disclosure, so an injected value never triggers a live read.
+  const live = useLegacyPiiDisclosure(disclosure === undefined);
   const data = useMemo(
-    () => (disclosure ? disclosure : deriveLiveDisclosure()),
-    [disclosure],
+    () => disclosure ?? live ?? deriveLiveDisclosure(),
+    [disclosure, live],
   );
 
   const presentKeys = data.residue.keys.filter((entry) => entry.present);

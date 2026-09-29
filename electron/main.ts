@@ -51,6 +51,7 @@ import {
   migrateKey,
   eliminateKey,
 } from "./quarantine.js";
+import { readLegacyPiiRows } from "./legacyRows.js";
 import {
   createDiagnosticBackup,
   DiagnosticGateError,
@@ -762,6 +763,24 @@ function setupIpcHandlers(): void {
       return result;
     } catch (error) {
       console.error("[privacy:eliminate-key] Error:", error);
+      throw error;
+    }
+  });
+
+  // ── privacy:legacy-rows (Beta5 desktop re-home) ─────────────────────
+  // READ-ONLY: the RAW legacy plaintext values for the three migrated PII
+  // keys, so the renderer can COPY them into the encrypted vault (the web
+  // re-home's desktop twin). The handler reads the three DECLARED keys and
+  // never a renderer-supplied key; an already-encrypted row yields no value.
+  // The values are PII: they travel in memory to the renderer only, are not
+  // logged, and are NEVER persisted in the renderer (the persistence bridge
+  // still refuses these three keys).
+  ipcMain.handle("privacy:legacy-rows", (event) => {
+    try {
+      assertTrustedSender(event);
+      return readLegacyPiiRows(db.$client);
+    } catch (error) {
+      console.error("[privacy:legacy-rows] Error:", error);
       throw error;
     }
   });

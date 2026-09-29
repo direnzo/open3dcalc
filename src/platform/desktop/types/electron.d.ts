@@ -9,6 +9,9 @@
 // canonical PII table list means adding a table is a compile error here rather
 // than a silently un-reported column in the IPC contract.
 import type { PiiDomainTableCounts } from "../../../../electron/piiDomainTables.js";
+// Type-only: derives the legacy-rows contract from the main-process reader, so
+// a change to the report shape is a compile error here, not a silent drift.
+import type { LegacyPiiRowsReport } from "../../../../electron/legacyRows.js";
 
 /** Database operations available through IPC. */
 /** Full Electron API exposed via contextBridge. */
@@ -121,6 +124,14 @@ declare global {
       reason?: string;
       residueRetained?: boolean;
     }>;
+
+    /**
+     * Beta5 desktop re-home: the RAW legacy plaintext values of the three
+     * migrated PII keys, so the renderer can COPY them into the encrypted vault
+     * (the web re-home's desktop twin). READ-ONLY. These values are PII: they
+     * live in renderer memory only and are NEVER persisted there.
+     */
+    legacyRows: () => Promise<LegacyPiiRowsReport>;
   }
 }
 

@@ -5,6 +5,10 @@ import { contextBridge, ipcRenderer } from "electron";
 // means a fifth PII table is a compile error here, not a silently un-reported
 // column in the IPC contract.
 import type { PiiDomainTableCounts } from "./piiDomainTables.js" with { "resolution-mode": "import" };
+// Type-only, same reason as above: the desktop re-home's read contract is
+// derived from the main-process reader, so a change to the report shape is a
+// compile error here rather than a silently narrower IPC contract.
+import type { LegacyPiiRowsReport } from "./legacyRows.js" with { "resolution-mode": "import" };
 
 /**
  * Type-safe API exposed to the renderer process via contextBridge.
@@ -248,6 +252,21 @@ const electronAPI = {
       reason?: string;
       residueRetained?: boolean;
     }> => ipcRenderer.invoke("privacy:recover-key", key),
+
+    /**
+     * Beta5 desktop re-home: the RAW legacy plaintext values of the three
+     * migrated PII keys (`open3dcalc_customers_v1`, `open3dcalc_quotes_v1`,
+     * `open3dcalc_history_v2`), so the renderer can COPY them into the
+     * encrypted vault — the web re-home's desktop twin.
+     *
+     * READ-ONLY and metadata-complete: a key whose row is absent is `absent`, a
+     * key already holding an ADR-001 envelope is `already_encrypted` with no
+     * value, and only a legacy plaintext row carries `value`. These values are
+     * PII: they live in renderer memory only and are NEVER persisted there (the
+     * persistence bridge refuses the three keys).
+     */
+    legacyRows: (): Promise<LegacyPiiRowsReport> =>
+      ipcRenderer.invoke("privacy:legacy-rows"),
   },
 } as const;
 

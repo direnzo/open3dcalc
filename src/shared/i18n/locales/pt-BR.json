@@ -1260,6 +1260,7 @@
       "historyComplete": "Concluída",
       "historyResumable": "Retomável — uma migração interrompida pode ser retomada",
       "markerNote": "Chave do marcador: {{key}}",
+      "legacyMarkerPlaintext": "O marcador legado {{key}} ainda guarda um valor em texto puro. O código atual nunca escreve esta chave; qualquer valor remanescente é resíduo em texto puro de uma versão antiga, mantido sem exclusão automática até uma eliminação explícita.",
       "driftHeading": "Alteração na fonte legada",
       "driftWarning": "A fonte legada mudou depois da migração: {{sources}} já não corresponde ao que foi migrado. Nada foi reconciliado automaticamente.",
       "valueFreeNote": "Este painel é informativo e sem valores: exibe apenas nomes de chave, contagens e estados."

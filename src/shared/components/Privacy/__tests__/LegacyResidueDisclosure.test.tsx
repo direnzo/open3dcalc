@@ -46,7 +46,11 @@ function disclosure(
       completed: false,
       markerKey: LEGACY_PII_REHOME_MARKER_KEY,
     },
-    historyMarker: { state: "absent", markerKey: MIGRATION_MARKER_KEY },
+    historyMarker: {
+      state: "absent",
+      markerKey: MIGRATION_MARKER_KEY,
+      legacyPlaintextResidue: false,
+    },
     ...overrides,
   };
 }
@@ -160,7 +164,13 @@ describe("LegacyResidueDisclosure — re-home / marker state", () => {
     ["resumable", "privacy.residue.historyResumable"],
   ] as const)("states the history marker as %s", (state, label) => {
     renderPanel(
-      disclosure({ historyMarker: { state, markerKey: MIGRATION_MARKER_KEY } }),
+      disclosure({
+        historyMarker: {
+          state,
+          markerKey: MIGRATION_MARKER_KEY,
+          legacyPlaintextResidue: false,
+        },
+      }),
     );
     expect(screen.getByText(label)).toBeInTheDocument();
   });
@@ -173,6 +183,30 @@ describe("LegacyResidueDisclosure — re-home / marker state", () => {
     expect(
       screen.getByText(new RegExp(MIGRATION_MARKER_KEY)),
     ).toBeInTheDocument();
+  });
+
+  it("discloses the legacy marker's plaintext residue only when it is present", () => {
+    // F1: the manifest declares the legacy marker encrypted_at_rest, but any
+    // value an old build left is PLAINTEXT residue. The panel must say so.
+    renderPanel(
+      disclosure({
+        historyMarker: {
+          state: "resumable",
+          markerKey: MIGRATION_MARKER_KEY,
+          legacyPlaintextResidue: true,
+        },
+      }),
+    );
+    expect(
+      screen.getByText(/privacy\.residue\.legacyMarkerPlaintext/),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the plaintext-marker disclosure when no legacy value remains", () => {
+    renderPanel(disclosure());
+    expect(
+      screen.queryByText(/privacy\.residue\.legacyMarkerPlaintext/),
+    ).not.toBeInTheDocument();
   });
 });
 

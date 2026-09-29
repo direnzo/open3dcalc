@@ -728,6 +728,7 @@ const RESIDUE_KEYS = [
   "historyComplete",
   "historyResumable",
   "markerNote",
+  "legacyMarkerPlaintext",
   "driftHeading",
   "driftWarning",
   "valueFreeNote",
@@ -738,6 +739,7 @@ const RESIDUE_PLACEHOLDERS: Record<string, readonly string[]> = {
   residueKey: ["{{key}}", "{{count}}"],
   vaultUnavailableDetail: ["{{reason}}"],
   markerNote: ["{{key}}"],
+  legacyMarkerPlaintext: ["{{key}}"],
   driftWarning: ["{{sources}}"],
 };
 

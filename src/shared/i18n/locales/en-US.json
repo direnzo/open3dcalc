@@ -1260,6 +1260,7 @@
       "historyComplete": "Complete",
       "historyResumable": "Resumable — an interrupted migration can be resumed",
       "markerNote": "Marker key: {{key}}",
+      "legacyMarkerPlaintext": "The legacy marker {{key}} still holds a plaintext value. The current code never writes this key; any remaining value is plaintext residue left by an older build, retained without automatic deletion until an explicit elimination.",
       "driftHeading": "Legacy source changed",
       "driftWarning": "The legacy source changed after the migration: {{sources}} no longer matches what was migrated. Nothing was reconciled automatically.",
       "valueFreeNote": "This panel is informational and value-free: it shows only key names, counts and states."

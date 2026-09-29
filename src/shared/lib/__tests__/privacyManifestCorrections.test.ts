@@ -220,6 +220,19 @@ describe("SPEC-01: open3dcalc_migration_done_v2 is PII-bearing", () => {
     expect(purpose).toMatch(/history/i);
   });
 
+  it("purpose discloses the plaintext residue the encrypted_at_rest policy does not describe", () => {
+    // SPEC-01 truthfulness: `persistence: encrypted_at_rest` is the policy for
+    // NEW writes, and the current code never writes this key. Any value an old
+    // build left is PLAINTEXT residue retained by copy-without-delete and
+    // declared as such — the purpose must say all three facts explicitly.
+    const purpose =
+      getEntry(manifest, "open3dcalc_migration_done_v2")?.purpose ?? "";
+    expect(purpose).toMatch(/never writes/i);
+    expect(purpose).toMatch(/plaintext/i);
+    expect(purpose).toMatch(/copy-without-delete/i);
+    expect(purpose).toMatch(/disclos/i);
+  });
+
   it("keeps open3dcalc_products as non-PII (explicitly out of scope)", () => {
     expect(getEntry(manifest, "open3dcalc_products")).toMatchObject({
       pii: false,

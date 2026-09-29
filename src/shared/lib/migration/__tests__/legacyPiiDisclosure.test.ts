@@ -251,6 +251,39 @@ describe("getLegacyPiiDisclosure — history migration marker (value-free)", () 
     expect(disclosure.rehome.markerKey).toBe(LEGACY_PII_REHOME_MARKER_KEY);
     expect(disclosure.historyMarker.markerKey).toBe(MIGRATION_MARKER_KEY);
   });
+
+  it("flags the legacy marker's plaintext residue when any value remains", () => {
+    // F1: the legacy key is PLAINTEXT residue whenever it holds anything — a
+    // resumable backup OR the legacy non-JSON "done" value.
+    for (const raw of [BACKUP_MARKER, "done"]) {
+      const disclosure = disclosureWith({
+        read: readMap({ [MIGRATION_MARKER_KEY]: raw }),
+        vault: LOCKED,
+      });
+      expect(disclosure.historyMarker.legacyPlaintextResidue).toBe(
+        raw !== null,
+      );
+    }
+  });
+
+  it("reports no legacy plaintext residue when the legacy key is absent", () => {
+    const disclosure = disclosureWith({ read: readMap({}), vault: LOCKED });
+    expect(disclosure.historyMarker.legacyPlaintextResidue).toBe(false);
+  });
+
+  it("does not treat the value-free progress marker as legacy plaintext residue", () => {
+    const disclosure = disclosureWith({
+      read: readMap({
+        [MIGRATION_PROGRESS_KEY]: JSON.stringify({
+          type: "open3dcalc-history-v2-progress",
+          v: 1,
+        }),
+      }),
+      vault: LOCKED,
+    });
+    expect(disclosure.historyMarker.state).toBe("resumable");
+    expect(disclosure.historyMarker.legacyPlaintextResidue).toBe(false);
+  });
 });
 
 describe("getLegacyPiiDisclosure — default readers", () => {

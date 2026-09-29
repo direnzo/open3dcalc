@@ -86,6 +86,17 @@ export interface HistoryMarkerDisclosure {
   state: HistoryMarkerState;
   /** The marker KEY NAME only — never its value. */
   markerKey: string;
+  /**
+   * True when the LEGACY PII-bearing marker key currently holds ANY value.
+   *
+   * That value is PLAINTEXT residue: an old build wrote the raw pre-migration
+   * history array there, and copy-without-delete means the current code never
+   * erases it. The declared `persistence: encrypted_at_rest` is therefore the
+   * policy for NEW writes (which never happen) rather than a description of the
+   * bytes an old install left behind — this flag is what the panel uses to say
+   * so explicitly. Value-free: only presence, never content.
+   */
+  legacyPlaintextResidue: boolean;
 }
 
 export interface LegacyPiiDisclosure {
@@ -170,8 +181,9 @@ export function getLegacyPiiDisclosure(
 
   const report = detectLegacyPlaintextPii(read);
   const completed = read(LEGACY_PII_REHOME_MARKER_KEY) !== null;
+  const legacyMarkerRaw = read(MIGRATION_MARKER_KEY);
   const historyState = historyMarkerState(
-    read(MIGRATION_MARKER_KEY),
+    legacyMarkerRaw,
     read(MIGRATION_PROGRESS_KEY),
   );
 
@@ -190,6 +202,7 @@ export function getLegacyPiiDisclosure(
     historyMarker: {
       state: historyState,
       markerKey: MIGRATION_MARKER_KEY,
+      legacyPlaintextResidue: legacyMarkerRaw !== null,
     },
     drift: detectMigrationDrift(read),
   };

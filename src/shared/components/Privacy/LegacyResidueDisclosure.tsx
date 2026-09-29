@@ -28,8 +28,10 @@ import {
  *
  *  (a) which legacy plaintext PII keys still hold data and how many records,
  *  (b) the vault access state (`hydrated | locked | unavailable`),
- *  (c) the re-home state (`migrated | pending | incomplete`) and the
- *      history-migration marker state.
+ *  (c) the re-home state (`migrated | pending | incomplete`), the
+ *      history-migration marker state, and whether the legacy PII-bearing
+ *      marker still holds PLAINTEXT residue (a value an old build wrote that
+ *      the current code never writes and copy-without-delete never erases).
  *
  * It renders KEY NAMES, COUNTS and STATES only. No record value and no marker
  * value is ever read into — or rendered by — this component: the derivation
@@ -192,6 +194,13 @@ export function LegacyResidueDisclosure({
             key: data.historyMarker.markerKey,
           })}
         </p>
+        {data.historyMarker.legacyPlaintextResidue && (
+          <p className="text-[11px] text-[var(--color-warning)]">
+            {t("privacy.residue.legacyMarkerPlaintext", {
+              key: data.historyMarker.markerKey,
+            })}
+          </p>
+        )}
       </div>
 
       {/* T4.6 — value-free drift: the legacy source changed after the commit */}

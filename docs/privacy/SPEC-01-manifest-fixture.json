@@ -54,7 +54,7 @@
         "policy": "user_controlled",
         "max_days": 0
       },
-      "purpose": "LEGACY, read-only: an older build wrote the raw pre-migration history array (source/baseEntries/productsSource) here, making it PII-bearing despite its marker-like name. The current code NEVER writes it — it is read only to CONSUME a marker an old install already stored and to CLEAN it once the migration verifies; a new run records value-free progress under open3dcalc_migration_progress_v2. Never synced or exported.",
+      "purpose": "LEGACY, read-only: an older build wrote the raw pre-migration history array (source/baseEntries/productsSource) here, making it PII-bearing despite its marker-like name. The current code NEVER writes this key; it is read only to CONSUME a marker an old install already stored and to CLEAN it once the migration verifies, and a new run records value-free progress under open3dcalc_migration_progress_v2 instead. `persistence: encrypted_at_rest` is the declared policy for NEW writes — and no new write ever happens. DIVERGENCE, disclosed: any value an old install left here is PLAINTEXT residue (the raw history array is stored unencrypted), retained by copy-without-delete — the current code never erases it automatically — and it is declared as plaintext residue in the in-app Legacy residue panel. Never synced or exported.",
       "legal_basis": "consent",
       "owner": "hermes",
       "version": "1.2"

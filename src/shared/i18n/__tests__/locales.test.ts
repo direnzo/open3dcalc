@@ -598,6 +598,56 @@ describe("i18n locales — multi-material disabled explanation", () => {
   });
 });
 
+/**
+ * T3.3 — the locked shell / unlock surface. Every string it renders goes
+ * through `t("privacy.vault.*")`; a missing key would render the raw key on the
+ * one control that stands between a locked user and an empty-looking app.
+ * The two `*Detail` strings are interpolated, so their placeholder is asserted
+ * rather than the literal, in both locales.
+ */
+const VAULT_KEYS = [
+  "ariaLabel",
+  "lockedTitle",
+  "lockedMessage",
+  "passphraseLabel",
+  "passphrasePlaceholder",
+  "unlock",
+  "unlocking",
+  "memoryNote",
+  "unlockError",
+  "unavailableTitle",
+  "unavailableMessage",
+] as const;
+
+const VAULT_DETAIL_KEYS = ["unlockErrorDetail", "unavailableDetail"] as const;
+
+describe("i18n locales (privacy.vault.*) — T3.3 locked shell", () => {
+  it.each([
+    ["pt-BR", ptBR],
+    ["en-US", enUS],
+  ])("resolves every privacy.vault.* key in %s", (_locale, dict) => {
+    for (const key of VAULT_KEYS) {
+      const value = resolve(dict, ["privacy", "vault", key]);
+      expect(typeof value, `privacy.vault.${key}`).toBe("string");
+      expect((value as string).length).toBeGreaterThan(0);
+    }
+    for (const key of VAULT_DETAIL_KEYS) {
+      const value = resolve(dict, ["privacy", "vault", key]);
+      expect(typeof value, `privacy.vault.${key}`).toBe("string");
+      expect(value as string, `privacy.vault.${key}`).toContain("{{reason}}");
+    }
+  });
+
+  it("has no orphan privacy.vault keys in either locale", () => {
+    const expected = [...VAULT_KEYS, ...VAULT_DETAIL_KEYS].sort();
+    for (const dict of [ptBR, enUS]) {
+      const vault = resolve(dict, ["privacy", "vault"]) as
+        Record<string, unknown> | undefined;
+      expect(Object.keys(vault ?? {}).sort()).toEqual(expected);
+    }
+  });
+});
+
 describe("i18n locales — no hardcoded currency symbol (R$) in en-US", () => {
   it("en-US labels never hardcode R$; the symbol comes from useCurrency()", () => {
     const all: { key: string; value: string }[] = [];

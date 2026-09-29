@@ -1185,6 +1185,21 @@
       "withdraw": "Withdraw consent",
       "withdrawConfirm": "Withdraw consent? Data collected under it will be erased per policy (SPEC-04 §6) and the affected features will be blocked.",
       "flagsNote": "Tutorial, onboarding or banner flags never substitute consent — only the receipt counts (SPEC-04 §2)."
+    },
+    "vault": {
+      "ariaLabel": "Personal data locked",
+      "lockedTitle": "Your personal data is locked",
+      "lockedMessage": "Customers, quotes and history are encrypted and will not load without your passphrase. Nothing was deleted. Unlock for this session to see them again.",
+      "passphraseLabel": "Profile passphrase",
+      "passphrasePlaceholder": "Enter passphrase",
+      "unlock": "Unlock",
+      "unlocking": "Unlocking…",
+      "memoryNote": "The passphrase stays only in this session's memory and is never stored.",
+      "unlockError": "Could not unlock.",
+      "unlockErrorDetail": "Reason: {{reason}}",
+      "unavailableTitle": "Personal data unavailable in this environment",
+      "unavailableMessage": "This environment cannot protect personal data (no encryption or secure storage), so customers, quotes and history are neither shown nor written. Nothing was deleted.",
+      "unavailableDetail": "Reason: {{reason}}"
     }
   },
   "tooltip": {

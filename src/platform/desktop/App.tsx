@@ -3,6 +3,7 @@ import { Header } from "@/platform/desktop/components/Header/Header";
 import { DemoModeIndicator } from "@/shared/components/DemoMode/DemoModeIndicator";
 import { DemoExportBlockedToast } from "@/shared/components/DemoMode/DemoExportBlockedToast";
 import { PrivacyBanner } from "@/shared/components/ui/PrivacyBanner";
+import { PiiLockedShell } from "@/shared/components/Privacy/PiiLockedShell";
 import { Tutorial } from "@/shared/components/ui/Tutorial";
 import { UpdateNotification } from "@/platform/desktop/components/UpdateNotification/UpdateNotification";
 import { AppShell } from "@/shared/components/AppShell/AppShell";
@@ -66,6 +67,7 @@ function AppContent(): React.ReactElement {
       <DemoExportBlockedToast />
       <UpdateNotification className="max-w-[1440px] mx-auto w-full px-6 sm:px-8 lg:px-12 pt-4" />
       <PrivacyBanner />
+      <PiiLockedShell />
 
       <div className="flex flex-1 w-full max-w-[1600px] 2xl:max-w-[1920px] mx-auto overflow-x-clip">
         <AppShell

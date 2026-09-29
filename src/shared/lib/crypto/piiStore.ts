@@ -534,7 +534,9 @@ function sampleBrowser(): {
  * Without this, jsdom (which has no IndexedDB at all) could never exercise a
  * capable vault.
  */
-function installEnvironment(options: PiiStoreOptions): PiiStoreEnvironment {
+export function installPiiStoreEnvironment(
+  options: PiiStoreOptions = {},
+): PiiStoreEnvironment {
   const sampled: PiiStoreEnvironment = {
     ...sampleBrowser(),
     webCryptoAvailable: globalThis.crypto?.subtle !== undefined,
@@ -552,6 +554,18 @@ function installEnvironment(options: PiiStoreOptions): PiiStoreEnvironment {
 /** The held derived key for a store, or null. Exported for the export test. */
 export function heldKeyForTests(key: string): CryptoKey | null {
   return heldKeys.get(key)?.key ?? null;
+}
+
+/**
+ * True while this store's derived session key is held in memory.
+ *
+ * The locked shell's startup wake reads this to answer "is there a key to
+ * rehydrate with?" WITHOUT opening storage: a locked store must not be read,
+ * and `createPiiStore(key).isUnlocked()` would need a factory the caller may
+ * not have. Keyed by the logical storage key alone, like the held-key map.
+ */
+export function isPiiStoreUnlocked(key: string): boolean {
+  return heldKeys.has(key);
 }
 
 /** Drop every held key and pending write chain. Test-only. */
@@ -574,7 +588,7 @@ export async function unlockPiiStore(
   passphrase: string,
   options: PiiStoreOptions = {},
 ): Promise<void> {
-  installEnvironment(options);
+  installPiiStoreEnvironment(options);
   const factory = factoryFrom(options);
   if (factory === null) {
     throw new PiiStoreDeniedError("indexeddb_unavailable");
@@ -647,7 +661,7 @@ export function createPiiStore(
   key: string,
   options: PiiStoreOptions = {},
 ): PiiStore {
-  installEnvironment(options);
+  installPiiStoreEnvironment(options);
   // Refuse AT CONSTRUCTION when this environment can never support the vault.
   // Every operation would refuse anyway, but an inert handle is an invitation:
   // a future caller could hold one, assume it works, and ship a path that

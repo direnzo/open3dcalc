@@ -1185,6 +1185,21 @@
       "withdraw": "Retirar consentimento",
       "withdrawConfirm": "Retirar o consentimento? Os dados coletados sob essa permissão serão apagados conforme a política (SPEC-04 §6) e os recursos afetados serão bloqueados.",
       "flagsNote": "Flags de tutorial, onboarding ou banner nunca substituem o consentimento — apenas o recibo conta (SPEC-04 §2)."
+    },
+    "vault": {
+      "ariaLabel": "Dados pessoais bloqueados",
+      "lockedTitle": "Seus dados pessoais estão bloqueados",
+      "lockedMessage": "Clientes, orçamentos e histórico estão criptografados e não carregam sem a sua senha. Nada foi apagado. Desbloqueie para esta sessão para vê-los novamente.",
+      "passphraseLabel": "Senha do perfil",
+      "passphrasePlaceholder": "Digite a senha",
+      "unlock": "Desbloquear",
+      "unlocking": "Desbloqueando…",
+      "memoryNote": "A senha fica somente na memória desta sessão e nunca é gravada.",
+      "unlockError": "Não foi possível desbloquear.",
+      "unlockErrorDetail": "Motivo: {{reason}}",
+      "unavailableTitle": "Dados pessoais indisponíveis neste ambiente",
+      "unavailableMessage": "Este ambiente não consegue proteger dados pessoais (sem criptografia ou armazenamento seguro), então clientes, orçamentos e histórico não são exibidos nem gravados. Nada foi apagado.",
+      "unavailableDetail": "Motivo: {{reason}}"
     }
   },
   "tooltip": {

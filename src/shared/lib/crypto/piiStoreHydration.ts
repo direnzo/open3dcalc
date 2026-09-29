@@ -49,6 +49,8 @@
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import {
   PiiStoreDeniedError,
+  installPiiStoreEnvironment,
+  isPiiStoreUnlocked,
   lockPiiStore,
   piiPersistStorage,
   unlockPiiStore,
@@ -57,6 +59,7 @@ import {
 import {
   piiStoreRefusalReason,
   type PiiStoreDenialReason,
+  type PiiStoreEnvironment,
 } from "./piiStoreCapability.js";
 
 /**
@@ -136,6 +139,60 @@ export function getLastPiiWriteRefusal(): {
   reason: PiiStoreDenialReason;
 } | null {
   return lastWriteRefusal;
+}
+
+/**
+ * The runtime options this gate was configured with (see
+ * `configurePiiStoreRuntime`). The unlocked shell forwards them to
+ * `unlockPiiStoresAndRehydrate` so a platform adapter or a test that injected a
+ * vault keeps it across the unlock instead of the call resetting to the global.
+ */
+export function getPiiStoreRuntimeOptions(): PiiStoreOptions {
+  return runtimeOptions;
+}
+
+/**
+ * Sample the runtime and install the capability snapshot the gate reads.
+ *
+ * The stores are created before any passphrase exists, so nothing installs the
+ * environment until an operation runs. The UI needs the capability answer
+ * BEFORE an operation, to tell "locked, enter your passphrase" apart from
+ * "this environment can never protect PII" — so it calls this once at mount.
+ */
+export function installPiiStoreRuntimeEnvironment(): PiiStoreEnvironment {
+  return installPiiStoreEnvironment(runtimeOptions);
+}
+
+/**
+ * What a PII surface must render right now.
+ *
+ * Derived from the SAME two sources the gate already uses — hydration state and
+ * `piiStoreRefusalReason` — never from a store read: a locked vault must never
+ * be presented as an empty store, and this state is how the UI knows not to.
+ * The reason is a compile-time constant, so it carries no PII.
+ */
+export type PiiVaultAccessState =
+  | { status: "hydrated" }
+  | { status: "locked"; reason: "profile_locked" }
+  | { status: "unavailable"; reason: PiiStoreDenialReason };
+
+/**
+ * The current access state, after `installPiiStoreRuntimeEnvironment()`.
+ *
+ * `profile_locked` is the ONLY refusal the user can fix by entering a
+ * passphrase, so it is the only one that renders the unlock form; every other
+ * reason is an environment fact and gets the explanatory shell instead.
+ */
+export function getPiiStoreAccessState(): PiiVaultAccessState {
+  const allHydrated = PII_STORE_KEYS.every(
+    (key) => getPiiStoreHydrationStatus(key) === "hydrated",
+  );
+  if (allHydrated) return { status: "hydrated" };
+
+  const reason = piiStoreRefusalReason(true) ?? "profile_locked";
+  return reason === "profile_locked"
+    ? { status: "locked", reason }
+    : { status: "unavailable", reason };
 }
 
 function refusalForUnhydrated(): PiiStoreDenialReason {
@@ -368,6 +425,26 @@ export async function unlockPiiStoresAndRehydrate(
   for (const key of PII_STORE_KEYS) {
     await unlockPiiStore(key, passphrase, options);
   }
+  return rehydratePiiStores();
+}
+
+/**
+ * Wake the gate at startup when the vault is ALREADY unlocked.
+ *
+ * The three stores set `skipHydration: true`, so nothing hydrates them at
+ * construction. A normal page load holds no key and is `locked` (the shell
+ * unlocks it). But a runtime that unlocked the vault before the first render —
+ * a resumed session, a platform adapter, a test — must not sit on a held key
+ * and an unhydrated store. This is the production caller for
+ * `rehydratePiiStores()`: it runs it only when every key is held, and returns
+ * null when there is nothing to wake, so a locked profile is never rehydrated
+ * into a fail-closed `failed` state by startup.
+ */
+export async function rehydratePiiStoresIfUnlocked(): Promise<
+  PiiRehydrateOutcome[] | null
+> {
+  const everyKeyHeld = PII_STORE_KEYS.every((key) => isPiiStoreUnlocked(key));
+  if (!everyKeyHeld) return null;
   return rehydratePiiStores();
 }
 

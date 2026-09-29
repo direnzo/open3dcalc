@@ -1231,6 +1231,30 @@
       "unavailableTitle": "Personal data unavailable in this environment",
       "unavailableMessage": "This environment cannot protect personal data (no encryption or secure storage), so customers, quotes and history are neither shown nor written. Nothing was deleted.",
       "unavailableDetail": "Reason: {{reason}}"
+    },
+    "residue": {
+      "title": "Legacy plaintext data",
+      "subtitle": "Transparency about the personal-data residue that older versions wrote in plaintext, the encrypted vault state, and the migration state. Only key names and counts are shown — never values.",
+      "residueHeading": "Plaintext residue",
+      "residueNone": "No plaintext residue found under the three legacy keys.",
+      "residueTotal": "{{count}} plaintext record(s) in total.",
+      "residueKey": "{{key}} · {{count}} record(s)",
+      "residueKeptNote": "The plaintext is never deleted automatically: the keys above stay in local storage until an explicit elimination.",
+      "vaultHeading": "Encrypted vault state",
+      "vaultHydrated": "Unlocked and hydrated",
+      "vaultLocked": "Locked — enter your passphrase to access",
+      "vaultUnavailable": "Unavailable in this environment",
+      "vaultUnavailableDetail": "Reason: {{reason}}",
+      "rehomeHeading": "Vault re-home",
+      "rehomeMigrated": "Migrated to the encrypted vault (or nothing to migrate)",
+      "rehomePending": "Pending — plaintext residue has not been re-homed yet",
+      "rehomeIncomplete": "Incomplete — a previous migration was interrupted",
+      "historyHeading": "History migration marker",
+      "historyAbsent": "Absent",
+      "historyComplete": "Complete",
+      "historyResumable": "Resumable — an interrupted migration can be resumed",
+      "markerNote": "Marker key: {{key}}",
+      "valueFreeNote": "This panel is informational and value-free: it shows only key names, counts and states."
     }
   },
   "tooltip": {

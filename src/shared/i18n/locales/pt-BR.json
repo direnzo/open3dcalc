@@ -1231,6 +1231,30 @@
       "unavailableTitle": "Dados pessoais indisponíveis neste ambiente",
       "unavailableMessage": "Este ambiente não consegue proteger dados pessoais (sem criptografia ou armazenamento seguro), então clientes, orçamentos e histórico não são exibidos nem gravados. Nada foi apagado.",
       "unavailableDetail": "Motivo: {{reason}}"
+    },
+    "residue": {
+      "title": "Dados legados em texto puro",
+      "subtitle": "Transparência sobre o resíduo de dados pessoais gravado em texto puro por versões antigas, o estado do cofre criptografado e o estado da migração. Somente nomes de chave e contagens são mostrados — nunca valores.",
+      "residueHeading": "Resíduo em texto puro",
+      "residueNone": "Nenhum resíduo em texto puro encontrado nas três chaves legadas.",
+      "residueTotal": "{{count}} registro(s) em texto puro no total.",
+      "residueKey": "{{key}} · {{count}} registro(s)",
+      "residueKeptNote": "O texto puro nunca é apagado automaticamente: as chaves acima continuam no armazenamento local até uma eliminação explícita.",
+      "vaultHeading": "Estado do cofre criptografado",
+      "vaultHydrated": "Desbloqueado e hidratado",
+      "vaultLocked": "Bloqueado — informe a senha para acessar",
+      "vaultUnavailable": "Indisponível neste ambiente",
+      "vaultUnavailableDetail": "Motivo: {{reason}}",
+      "rehomeHeading": "Migração para o cofre",
+      "rehomeMigrated": "Migrado para o cofre criptografado (ou nada a migrar)",
+      "rehomePending": "Pendente — há resíduo em texto puro ainda não migrado",
+      "rehomeIncomplete": "Incompleto — uma migração anterior foi interrompida",
+      "historyHeading": "Marcador de migração do histórico",
+      "historyAbsent": "Ausente",
+      "historyComplete": "Concluída",
+      "historyResumable": "Retomável — uma migração interrompida pode ser retomada",
+      "markerNote": "Chave do marcador: {{key}}",
+      "valueFreeNote": "Este painel é informativo e sem valores: exibe apenas nomes de chave, contagens e estados."
     }
   },
   "tooltip": {

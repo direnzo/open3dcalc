@@ -688,6 +688,78 @@ describe("i18n locales (privacy.migration.*) — T5.2 choice dialog", () => {
   });
 });
 
+/**
+ * T5.3 — the legacy-residue disclosure panel. Every string it renders goes
+ * through `t("privacy.residue.*")`. The interpolated rows carry placeholders,
+ * so those are asserted rather than the literal, and the key sets are compared
+ * for EXACT parity because a key present in only one locale renders as a raw
+ * key for every user of that locale.
+ */
+const RESIDUE_KEYS = [
+  "title",
+  "subtitle",
+  "residueHeading",
+  "residueNone",
+  "residueTotal",
+  "residueKey",
+  "residueKeptNote",
+  "vaultHeading",
+  "vaultHydrated",
+  "vaultLocked",
+  "vaultUnavailable",
+  "vaultUnavailableDetail",
+  "rehomeHeading",
+  "rehomeMigrated",
+  "rehomePending",
+  "rehomeIncomplete",
+  "historyHeading",
+  "historyAbsent",
+  "historyComplete",
+  "historyResumable",
+  "markerNote",
+  "valueFreeNote",
+] as const;
+
+const RESIDUE_PLACEHOLDERS: Record<string, readonly string[]> = {
+  residueTotal: ["{{count}}"],
+  residueKey: ["{{key}}", "{{count}}"],
+  vaultUnavailableDetail: ["{{reason}}"],
+  markerNote: ["{{key}}"],
+};
+
+describe("i18n locales (privacy.residue.*) — T5.3 residue disclosure", () => {
+  it.each([
+    ["pt-BR", ptBR],
+    ["en-US", enUS],
+  ])("resolves every privacy.residue.* key in %s", (_locale, dict) => {
+    for (const key of RESIDUE_KEYS) {
+      const value = resolve(dict, ["privacy", "residue", key]);
+      expect(typeof value, `privacy.residue.${key}`).toBe("string");
+      expect((value as string).length).toBeGreaterThan(0);
+    }
+    for (const [key, placeholders] of Object.entries(RESIDUE_PLACEHOLDERS)) {
+      const value = resolve(dict, ["privacy", "residue", key]) as string;
+      for (const placeholder of placeholders) {
+        expect(
+          value,
+          `privacy.residue.${key} must keep ${placeholder}`,
+        ).toContain(placeholder);
+      }
+    }
+  });
+
+  it("keeps exact key parity between pt-BR and en-US", () => {
+    const ptKeys = Object.keys(
+      resolve(ptBR, ["privacy", "residue"]) as Record<string, unknown>,
+    ).sort();
+    const enKeys = Object.keys(
+      resolve(enUS, ["privacy", "residue"]) as Record<string, unknown>,
+    ).sort();
+    expect(ptKeys).toEqual(enKeys);
+    expect(ptKeys).toEqual([...RESIDUE_KEYS].sort());
+  });
+});
+
 describe("i18n locales (privacy.vault.*) — T3.3 locked shell", () => {
   it.each([
     ["pt-BR", ptBR],

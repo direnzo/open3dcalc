@@ -7,6 +7,7 @@ import {
   Trash2,
   AlertCircle,
 } from "lucide-react";
+import { LegacyResidueDisclosure } from "@/shared/components/Privacy/LegacyResidueDisclosure";
 
 /**
  * Privacy screen (D1.1 S4) — ADR-002 §2.2.4.
@@ -238,7 +239,7 @@ export function PrivacyScreen() {
 
   if (!privacyApi) {
     return (
-      <div className="p-4 sm:p-6 max-w-3xl mx-auto w-full">
+      <div className="p-4 sm:p-6 max-w-3xl mx-auto w-full space-y-4">
         <div className="surface rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
           <div>
@@ -250,6 +251,8 @@ export function PrivacyScreen() {
             </p>
           </div>
         </div>
+        {/* T5.3 — the browser residue exists on web too: disclose it here. */}
+        <LegacyResidueDisclosure />
       </div>
     );
   }
@@ -392,6 +395,9 @@ export function PrivacyScreen() {
       <p className="text-[11px] text-[var(--color-text-muted)]">
         {t("privacy.quarantine.readNote")}
       </p>
+
+      {/* ── T5.3 legacy residue + vault/marker disclosure ────────────── */}
+      <LegacyResidueDisclosure />
 
       {/* ── SPEC-04 consent receipt ─────────────────────────────────── */}
       {/* Every string below reads `privacy.consent_receipt.*`, NOT

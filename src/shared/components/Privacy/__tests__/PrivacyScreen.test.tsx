@@ -163,6 +163,24 @@ describe("PrivacyScreen (D1.1 S4)", () => {
     ).toBeInTheDocument();
     expect(hoisted.quarantineReport).not.toHaveBeenCalled();
   });
+
+  it("discloses the legacy residue panel on web (no electronAPI)", () => {
+    render(<PrivacyScreen />);
+    expect(
+      screen.getByRole("region", { name: "privacy.residue.title" }),
+    ).toBeInTheDocument();
+  });
+
+  it("discloses the legacy residue panel on desktop too", async () => {
+    stubElectronApi();
+    render(<PrivacyScreen />);
+    await waitFor(() =>
+      expect(hoisted.quarantineReport).toHaveBeenCalledTimes(1),
+    );
+    expect(
+      screen.getByRole("region", { name: "privacy.residue.title" }),
+    ).toBeInTheDocument();
+  });
 });
 
 /**

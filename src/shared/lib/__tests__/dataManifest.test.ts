@@ -313,6 +313,7 @@ describe("dataManifest loader (SPEC-01)", () => {
       "open3dcalc_onboarded",
       "open3dcalc_migration_done_v2",
       "open3dcalc_quickstart_dismissed",
+      "open3dcalc_legacy_pii_rehomed_v1",
       "i18nextLng",
     ];
     expect(findOrphanKeys(manifest, runtimeKeys)).toEqual([]);

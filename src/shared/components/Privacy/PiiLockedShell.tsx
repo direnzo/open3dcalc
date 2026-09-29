@@ -11,6 +11,7 @@ import {
   type PiiVaultAccessState,
 } from "@/shared/lib/crypto/piiStoreHydration";
 import type { PiiStoreDenialReason } from "@/shared/lib/crypto/piiStoreCapability";
+import { migrateLegacyPlaintextPiiToVault } from "@/shared/lib/migration/legacyPiiRehome";
 
 /**
  * T3.3 — the visible half of the locked PII vault.
@@ -50,6 +51,23 @@ function refusalCode(error: unknown): string {
   return typeof reason === "string" && reason.length > 0 ? reason : "unknown";
 }
 
+/**
+ * Re-home legacy plaintext PII now that the vault is unlocked and hydrated.
+ *
+ * This is the production caller HIGH-3 was missing: a profile that predates the
+ * vault unlocks to EMPTY stores (the vault is empty), while its real data is
+ * still plaintext. Running the migration here writes that residue into the
+ * encrypted destination and verifies it, without deleting the source. It is
+ * fire-and-forget and never turns a migration problem into an unlock error;
+ * refusals (no consent, unavailable vault) are reported to the console by name
+ * only, never with PII.
+ */
+function rehomeLegacyPii(): void {
+  void migrateLegacyPlaintextPiiToVault().catch(() => {
+    console.warn("[PiiLockedShell] legacy PII re-home did not complete");
+  });
+}
+
 export function PiiLockedShell(): ReactElement | null {
   const { t } = useTranslation();
   const [access, setAccess] = useState<PiiVaultAccessState>(() => {
@@ -69,6 +87,10 @@ export function PiiLockedShell(): ReactElement | null {
     let cancelled = false;
     void rehydratePiiStoresIfUnlocked().then((outcomes) => {
       if (cancelled || outcomes === null) return;
+      // A resumed session (or a platform adapter) already holds the key: the
+      // stores are hydrated, so this is the moment to re-home any legacy
+      // plaintext residue.
+      rehomeLegacyPii();
       const next = getPiiStoreAccessState();
       setAccess((current) => (current.status === next.status ? current : next));
     });
@@ -105,6 +127,9 @@ export function PiiLockedShell(): ReactElement | null {
       );
       setPassphrase("");
       setAccess(getPiiStoreAccessState());
+      // The vault is now hydrated: re-home any legacy plaintext residue so a
+      // pre-vault profile's stores are not left looking empty.
+      rehomeLegacyPii();
     } catch (caught) {
       setPassphrase("");
       setError(refusalCode(caught));

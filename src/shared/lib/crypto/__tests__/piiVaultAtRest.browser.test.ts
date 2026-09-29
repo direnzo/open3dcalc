@@ -204,11 +204,12 @@ describe("W6 — write commit order follows call order in a real browser", () =>
    *
    * This is a guard, NOT a falsifiable regression test for the Wave-5 ordering
    * fix (squash-merged into `main` as `1b7b885`). Verified empirically: with
-   * that fix reverted, this spec still passes 6/6, because Chromium completes
-   * the two AES-GCM seals in FIFO emission order — so "seal before enqueue"
-   * does NOT invert the commit order in this runtime, and the shapes below
-   * cannot reproduce the pre-fix inversion. What the spec adds is coverage of
-   * the real IndexedDB contract on the runtime that actually ships it.
+   * that fix reverted, the whole browser suite still passes 9/9, because
+   * Chromium completes the two AES-GCM seals in FIFO emission order — so
+   * "seal before enqueue" does NOT invert the commit order in this runtime,
+   * and the shapes below cannot reproduce the pre-fix inversion. What the spec
+   * adds is coverage of the real IndexedDB contract on the runtime that
+   * actually ships it.
    *
    * The deterministic, falsifiable guard is the unit test in `piiStore.test.ts`
    * ("commits writers in CALL order, so the last write issued wins"): it runs

@@ -110,9 +110,10 @@ Trabalho de remediação de privacidade do beta, fechado como PR #236:
   encadeadas são operações criptográficas independentes e podem resolver fora de ordem; um valor
   anterior (por exemplo o estado vazio inicial de uma action) podia ser enfileirado e commitado
   **depois** do mais novo e vencer — last-writer-wins invertido.
-- **Correção:** o selo passou a ocorrer **dentro da fila por chave** (`bdf5d99`), de modo que a fila
-  fixa a **ordem** além da contagem; `rehydratePiiStores()`/`unlockPiiStoresAndRehydrate()` passaram
-  a aguardar `whenPiiWritesSettled()` antes de ler.
+- **Correção:** o selo passou a ocorrer **dentro da fila por chave** (conteúdo squash-mergeado em
+  `main` como `1b7b885`), de modo que a fila fixa a **ordem** além da contagem;
+  `rehydratePiiStores()`/`unlockPiiStoresAndRehydrate()` passaram a aguardar `whenPiiWritesSettled()`
+  antes de ler.
 - **Verificação de falsificabilidade:** a Themis **reverteu o fix em clone isolado** e o teste de
   regressão determinístico de last-writer-wins **falhou (FAIL)** — o teste morde de fato. Com o fix
   presente, passa.
@@ -121,11 +122,11 @@ Trabalho de remediação de privacidade do beta, fechado como PR #236:
 
 ## 4. Revisões
 
-| Revisão                       | Commit revisado | Veredito             | Achados                                    | Situação                                                                         |
-| ----------------------------- | --------------- | -------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
-| Themis W3                     | `a0a698a`       | **CHANGES_REQUIRED** | HIGH-1, HIGH-2, HIGH-3                     | ✅ resolvidos                                                                    |
-| Themis full-branch            | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                                        | ✅ fix inicial em `6b1d186`; fechamento completo em `a7d8aaf`                    |
-| Themis gate final (exact-SHA) | `a7d8aaf`       | **APPROVED**         | H-4 e seu resíduo no caminho do calculador | ✅ fechado (`CalculatorHistoryWriteGate.test.tsx`, falsificabilidade verificada) |
+| Revisão                       | Commit revisado | Veredito             | Achados                                    | Situação                                                                                              |
+| ----------------------------- | --------------- | -------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Themis W3                     | `a0a698a`       | **CHANGES_REQUIRED** | HIGH-1, HIGH-2, HIGH-3                     | ✅ resolvidos                                                                                         |
+| Themis full-branch            | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                                        | ✅ fix inicial em `6b1d186`; fechamento completo em `a7d8aaf` (conteúdo squash-mergeado em `1b7b885`) |
+| Themis gate final (exact-SHA) | `a7d8aaf`       | **APPROVED**         | H-4 e seu resíduo no caminho do calculador | ✅ fechado (`CalculatorHistoryWriteGate.test.tsx`, falsificabilidade verificada)                      |
 
 **Aprovado:** a Themis aprovou o **exact-SHA final** `a7d8aaf` (gate final). Esse SHA é o registro
 histórico da branch de remediação: o PR #236 foi **squash-mergeado** em `main` como `1b7b885`, e o

@@ -5,26 +5,40 @@ entregue (waves 0–5), as evidências dos gates, as revisões da Themis e a **d
 que deve acompanhar as release notes. Onde um dado não foi medido, está escrito **não medido** —
 nenhum número é estimado.
 
-Status atual: **evidências e disclosure prontas; tag/deploy aguardam autorização humana.**
+Status atual: ✅ **PUBLICADO** (web-only) — implementação mergeada, gates verdes, Themis aprovada no
+exact-SHA, disclosure publicada, tag/deploy executados e validação live concluída.
 
 ---
 
 ## 1. Identificação
 
-| Campo          | Valor                                               |
-| -------------- | --------------------------------------------------- |
-| Produto        | Open3DCalc                                          |
-| Alvo           | `v2.0.0-beta.5` (canal **beta WEB**)                |
-| Branch         | `fix/beta5-privacy-remediation`                     |
-| Head (SHA)     | `a7d8aaff6ef0f1cb696f2f1f0a7ba4ce31f802f5`          |
-| PR             | #236                                                |
-| Base           | `main` @ `faa51d2e982ac5672fbcf4e107373c9187244211` |
-| `package.json` | `2.0.0-beta.5`                                      |
+| Campo                         | Valor                                                                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Produto                       | Open3DCalc                                                                                                               |
+| Alvo                          | `v2.0.0-beta.5` (canal **beta WEB**)                                                                                     |
+| Status                        | ✅ **PUBLICADO** (web-only)                                                                                              |
+| Branch de remediação          | `fix/beta5-privacy-remediation` (mergeada via **squash**)                                                                |
+| Head revisado (SHA histórico) | `a7d8aaff6ef0f1cb696f2f1f0a7ba4ce31f802f5` (exact-SHA aprovado pela Themis)                                              |
+| PR                            | #236 (**squash-mergeado** em `main`)                                                                                     |
+| Commit de merge (squash)      | `1b7b88518290348f28c6f70876c059a7d9a774e1`                                                                               |
+| Base original do PR           | `main` @ `faa51d2e982ac5672fbcf4e107373c9187244211`                                                                      |
+| `main` no corte da tag        | `a34c50ba84e3549dcd19de91adf041fc5f10f656`                                                                               |
+| Tag anotada                   | `v2.0.0-beta.5` (obj `c480f85ccbe3c74e211b93615ef603ddcc306a51`) → commit `a34c50b`                                      |
+| Release                       | [`v2.0.0-beta.5`](https://github.com/ils15/open3dcalc/releases/tag/v2.0.0-beta.5) (prerelease, **sem assets**, web-only) |
+| Live                          | `https://ils15.github.io/open3dcalc/beta/` — **HTTP 200**                                                                |
+| `releases/latest`             | `v1.14.0` (estável intacta)                                                                                              |
+| `package.json`                | `2.0.0-beta.5`                                                                                                           |
 
-> **SHA de release:** será o commit de merge em `main` (a ser registrado no corte da tag).
+> **SHA de release (registro histórico).** O gate final da Themis aprovou o **exact-SHA** `a7d8aaf` na
+> branch de remediação. O PR #236 foi **squash-mergeado** em `main` como `1b7b885`, de modo que o
+> conteúdo aprovado está contido nesse merge. O corte da tag ocorreu depois, em `main` @ `a34c50b`
+> (commit tagueado): a tag anotada `v2.0.0-beta.5` aponta para esse commit. Os SHAs acima são
+> imutáveis — não houve reescrita de história.
 
-> **Branch de resíduos W4** (`fix/beta5-privacy-w4-residuals`): fecha os follow-ups W4.4/T4.4, T4.6,
-> L-1 e L-2 e reconcilia a tabela do §6 (ver também a disclosure do §5).
+> **Branch de resíduos W4** (`fix/beta5-privacy-w4-residuals`, **pós-beta.5**): fecha os follow-ups
+> W4.4/T4.4, T4.6, L-1 e L-2 e reconcilia a tabela do §6 (ver também a disclosure do §5).
+> Permanecem **abertos** como follow-ups rastreáveis: **T4.5**, **W6** (harness real de browser) e o
+> **re-home desktop/IPC**.
 
 > A versão em `package.json` é a linha `2.0.0-beta.5`: o **bump é feito pelo workflow `beta.yml`**
 > no momento do corte da tag (`npm version` + commit + tag anotada). O repositório não bumpa a
@@ -113,8 +127,9 @@ Trabalho de remediação de privacidade do beta, fechado como PR #236:
 | Themis full-branch            | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                                        | ✅ fix inicial em `6b1d186`; fechamento completo em `a7d8aaf`                    |
 | Themis gate final (exact-SHA) | `a7d8aaf`       | **APPROVED**         | H-4 e seu resíduo no caminho do calculador | ✅ fechado (`CalculatorHistoryWriteGate.test.tsx`, falsificabilidade verificada) |
 
-**Aprovado:** a Themis aprovou o **exact-SHA final** `a7d8aaf` (gate final). O gate de release segue
-aberto apenas para os itens humanos (§7).
+**Aprovado:** a Themis aprovou o **exact-SHA final** `a7d8aaf` (gate final). Esse SHA é o registro
+histórico da branch de remediação: o PR #236 foi **squash-mergeado** em `main` como `1b7b885`, e o
+conteúdo aprovado está contido nesse merge. Todos os itens humanos do gate (§7) foram cumpridos.
 
 ---
 
@@ -162,17 +177,27 @@ aberto apenas para os itens humanos (§7).
 
 ## 7. Release gate checklist
 
-| #   | Gate                                                                                                                              | Status                           |
-| --- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| 1   | Implementação merged                                                                                                              | ⏳ (PR #236 OPEN na base `main`) |
-| 2   | Seis gates verdes (CI `checks`, `test`, `build-desktop`; local `test:run`, `typecheck`/`typecheck:electron`, `lint`, `build:all`) | ✅                               |
-| 3   | Themis aprovada no **exact-SHA** (`a7d8aaf`)                                                                                      | ✅                               |
-| 4   | Disclosure publicada (§5 nas release notes)                                                                                       | ⏳                               |
-| 5   | Tag/deploy autorizado por humano                                                                                                  | ⏳                               |
+| #   | Gate                                                                                                                              | Status                                                                                                             |
+| --- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | Implementação merged                                                                                                              | ✅ **squash-merge** `1b7b885` em `main`                                                                            |
+| 2   | Seis gates verdes (CI `checks`, `test`, `build-desktop`; local `test:run`, `typecheck`/`typecheck:electron`, `lint`, `build:all`) | ✅                                                                                                                 |
+| 3   | Themis aprovada no **exact-SHA** (`a7d8aaf`)                                                                                      | ✅                                                                                                                 |
+| 4   | Disclosure publicada (§5 nas release notes)                                                                                       | ✅                                                                                                                 |
+| 5   | Tag/deploy autorizado por humano                                                                                                  | ✅ autorização dada pelo usuário e **executada**                                                                   |
+| 6   | Corte da tag + deploy executados                                                                                                  | ✅ `beta.yml` run `36576102531` · `beta-deploy.yml` run `36576133040` · `pages-build-deployment` run `36576237752` |
+| 7   | Validação live                                                                                                                    | ✅ `beta/` HTTP 200; bundle `./assets/index.web-BhAASmC6.js` contém `2.0.0-beta.5`                                 |
+
+> **Autorização humana.** A autorização para cortar a tag e publicar o deploy foi dada pelo **usuário**
+> e **executada** pelos workflows listados (itens 5–6). O `beta-deploy.yml` foi auto-disparado pela tag
+> via PAT. `releases/latest` permanece `v1.14.0` — a estável segue intacta.
 
 ---
 
-## 8. Tag/deploy instructions
+## 8. Tag/deploy — registro do que foi executado
+
+> **Executado.** A autorização humana foi dada pelo usuário e os passos abaixo foram aplicados:
+> `beta.yml` run `36576102531` (corte, ✅) e `beta-deploy.yml` run `36576133040` (deploy, ✅,
+> auto-disparado pela tag via PAT). Mantidos como registro reproduzível do processo.
 
 1. **Cortar a beta** — _Actions → Beta channel → Run workflow_:
    - `version = 2.0.0`

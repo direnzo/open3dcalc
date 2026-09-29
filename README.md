@@ -428,11 +428,17 @@ npm run test:run -- --coverage
 # Harness de browser (PII vault em Chromium real) — requer o Chromium do
 # Playwright: `npx playwright install chromium` (no CI: `--with-deps`)
 npm run test:browser
+
+# Probe de keyring do build empacotado (Electron real, app.asar) — requer
+# `docker` para as linhas de container; `xvfb` é o fallback headless
+npm run test:packaged
 ```
 
 We use **Vitest** + **Testing Library** for unit and component tests. Minimum coverage for calculation logic: **80%**.
 
 `npm run test:browser` roda os specs `*.browser.test.ts` e `*.browser.test.tsx` num **Chromium real** (via Playwright) — o runtime que a web/PWA realmente usa, com `indexedDB` e Web Crypto verdadeiros. É **pré-requisito** instalar o browser uma vez: `npx playwright install chromium` (no CI o job instala com `npx playwright install --with-deps chromium`, que também puxa as libs de sistema do Chromium headless). Esse glob é **excluído** da suíte jsdom (`npm run test:run`), então as duas suítes não se sobrepõem.
+
+`npm run test:packaged` empacota um shell Electron mínimo (`electron-builder.probe.yml`) e roda o probe de keyring (`electron/selftest/packaged-probe.ts`) de dentro de um `app.asar` real, verificando que o gate §3.4 (ADR-001) se comporta como o ADR declara. Por padrão empacota e roda no host; `npm run test:packaged -- --no-build --image host` reusa o pacote e é o spelling explícito de "sem container", e `-- --image ubuntu:24.04` (ou outra imagem) roda dentro de um container. **Pré-requisitos:** `docker` para as linhas de container (o runner do CI já traz Docker) e `xvfb` como fallback headless quando a execução direta não produz relatório (no CI o job instala com `apt-get install -y xvfb`). O relatório é _value-free_ — sem PII, sem key material e sem paths — e o comando só sai com código 0 quando um relatório foi produzido e **todos** os invariantes se mantêm. Roda no job `test-packaged` do CI contra host + `ubuntu:24.04` / `debian:12` / `rockylinux:9`.
 
 ---
 
@@ -497,6 +503,7 @@ npm run db:migrate
 | `npm test`                   | Run tests in watch mode                                                      |
 | `npm run test:run`           | Run tests once (CI mode)                                                     |
 | `npm run test:browser`       | Run `*.browser.test.ts` / `*.browser.test.tsx` in real Chromium (Playwright) |
+| `npm run test:packaged`      | Packaged Electron keyring probe (real `app.asar`); Docker for containers     |
 | `npm run lint`               | ESLint check across entire project                                           |
 | `npm run typecheck`          | TypeScript check (`tsc --noEmit -p tsconfig.app.json`)                       |
 | `npm run typecheck:electron` | TypeScript check for Electron main process                                   |

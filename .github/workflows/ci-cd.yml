@@ -113,6 +113,68 @@ jobs:
           name: coverage
           path: coverage/
 
+  test-browser:
+    # The PII vault against a REAL browser: Chromium + IndexedDB + Web Crypto,
+    # via `vitest.browser.config.ts` and `npm run test:browser`.
+    #
+    # A separate job on purpose. `*.browser.test.ts` is EXCLUDED from the jsdom
+    # run (jsdom has no IndexedDB and reports `isSecureContext: undefined`), so
+    # this job is the only thing that collects those specs — losing it would not
+    # fail the `test` job, it would silently stop running them. Keeping it
+    # separate also stops the Chromium install (~1-2 min, plus Playwright's OS
+    # packages) from eating the jsdom suite's 15-minute budget.
+    #
+    # Headless is pinned in the config (`browser.headless: true`), so no xvfb is
+    # needed: the specs open no window and assert on storage and ciphertext.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: ⚡ Cache node_modules
+        id: npm-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules
+          key: npm-${{ hashFiles('package-lock.json') }}-${{ runner.os }}
+          restore-keys: |
+            npm-${{ runner.os }}-
+      - if: steps.npm-cache.outputs.cache-hit != 'true'
+        run: npm ci
+      - if: steps.npm-cache.outputs.cache-hit == 'true'
+        run: echo "  ✓ node_modules restored from cache"
+      - name: ⚡ Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on package-lock: a Playwright upgrade moves its browser
+          # revision, and a stale cache must not be reused for it.
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+      - name: Install Chromium
+        # `--with-deps` installs the shared libraries headless Chromium needs on
+        # ubuntu-latest (the runner has passwordless sudo). It is a no-op
+        # download when the cache above already holds the revision.
+        run: npx playwright install --with-deps chromium
+      - name: 🌐 Browser vault tests
+        run: npm run test:browser
+      - name: 🔔 Notify failure
+        if: failure()
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "❌ CI/CD failed: $REPO@$REF"
+          echo "  https://github.com/$REPO/actions/runs/$RUN_ID"
+
   build-web:
     needs: [checks, test]
     # Tag-gated: the stable Pages bundle is published from the immutable stable

@@ -176,6 +176,38 @@ describe("LegacyResidueDisclosure — re-home / marker state", () => {
   });
 });
 
+describe("LegacyResidueDisclosure — drift (T4.6, value-free)", () => {
+  it("renders no drift warning when there is no drift", () => {
+    renderPanel(disclosure());
+    expect(
+      screen.queryByText(/privacy\.residue\.driftHeading/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the honest drift warning when the source changed", () => {
+    renderPanel(
+      disclosure({
+        drift: { detected: true, sources: ["open3dcalc_history_v2"] },
+      }),
+    );
+    expect(
+      screen.getByText(/privacy\.residue\.driftHeading/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/privacy\.residue\.driftWarning/),
+    ).toBeInTheDocument();
+  });
+
+  it("names the changed KEY, never a value", () => {
+    renderPanel(
+      disclosure({
+        drift: { detected: true, sources: ["open3dcalc_products"] },
+      }),
+    );
+    expect(screen.getByText(/open3dcalc_products/)).toBeInTheDocument();
+  });
+});
+
 describe("LegacyResidueDisclosure — default derivation", () => {
   it("derives its own disclosure when none is injected", () => {
     // No throw and a labelled region: the default path installs the capability

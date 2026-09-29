@@ -850,6 +850,72 @@ describe("useAppInit tutorial auto-start", () => {
     await expect(vaultHistoryEntries()).resolves.toEqual(vaultAfterMigration);
   });
 
+  it("records a value-free drift fingerprint when the migration commits", async () => {
+    const historyKey = "open3dcalc_history_v2";
+    const fingerprintKey = "open3dcalc_migration_fingerprint_v1";
+    const result = {
+      totalCost: 6,
+      sellPrice: 12,
+      profit: 6,
+      materialCost: 3,
+      energyCost: 0.5,
+      machineCost: 1,
+      hardwareCost: 0,
+      consumablesCost: 0,
+      laborCost: 0.5,
+      softwareCost: 0,
+      failureCost: 0,
+      extrasCost: 0,
+      postProcessingCost: 1,
+      subtotal: 6,
+      marketplaceFee: 0,
+      taxAmount: 0,
+      costPerGram: 0.12,
+      costPerUnit: 6,
+      unitWeight: 50,
+      estimatedPrintTime: 1,
+      targetMarginPercent: 50,
+      breakEvenPrice: 6,
+      actualMargin: 50,
+      carbonFootprintGrams: 1,
+    };
+    const canary = "SENTINEL-DRIFT-FINGERPRINT-CANARY";
+    storageValues.set(
+      historyKey,
+      JSON.stringify([
+        {
+          id: "drift-history-01",
+          timestamp: 1_700_000_000_701,
+          type: "fdm",
+          summary: canary,
+          totalCost: 6,
+          sellPrice: 12,
+          profit: 6,
+          result,
+          snapshot: null,
+        },
+      ]),
+    );
+
+    await unlockVault();
+    renderHook(() => useAppInit(vi.fn()));
+    await vi.waitFor(() =>
+      expect(storageValues.has(fingerprintKey)).toBe(true),
+    );
+    await settleWrites();
+
+    const raw = storageValues.get(fingerprintKey);
+    expect(raw).toBeDefined();
+    // Counts only, and no legacy content leaks into the fingerprint.
+    expect(JSON.parse(raw as string)).toEqual({
+      type: "open3dcalc-migration-fingerprint",
+      v: 1,
+      history: 1,
+      products: null,
+    });
+    expect(raw).not.toContain(canary);
+  });
+
   it("recovers both original sources after a durable product write and partial history write", async () => {
     const historyKey = "open3dcalc_history_v2";
     const productKey = "open3dcalc_products";

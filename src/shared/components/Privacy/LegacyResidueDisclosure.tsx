@@ -1,7 +1,14 @@
 import { useMemo } from "react";
 import type { ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import { Database, HardDrive, History, Lock, ShieldCheck } from "lucide-react";
+import {
+  Database,
+  HardDrive,
+  History,
+  Lock,
+  ShieldCheck,
+  AlertTriangle,
+} from "lucide-react";
 import {
   getLegacyPiiDisclosure,
   type HistoryMarkerState,
@@ -186,6 +193,21 @@ export function LegacyResidueDisclosure({
           })}
         </p>
       </div>
+
+      {/* T4.6 — value-free drift: the legacy source changed after the commit */}
+      {data.drift?.detected && (
+        <div className="space-y-1" role="status">
+          <p className="text-xs font-semibold text-[var(--color-warning)] flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
+            {t("privacy.residue.driftHeading")}
+          </p>
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            {t("privacy.residue.driftWarning", {
+              sources: data.drift.sources.join(", "),
+            })}
+          </p>
+        </div>
+      )}
 
       <p className="text-[11px] text-[var(--color-text-muted)]">
         {t("privacy.residue.valueFreeNote")}

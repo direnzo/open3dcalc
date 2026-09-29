@@ -61,6 +61,10 @@ import {
   isHistoryMigrationBackup,
   isHistoryMigrationProgress,
 } from "@/shared/lib/migration/marker";
+import {
+  detectMigrationDrift,
+  type MigrationDrift,
+} from "@/shared/lib/migration/migrationDrift";
 
 /** The re-home disclosure state shown to the user. */
 export type RehomeDisclosureState = "migrated" | "pending" | "incomplete";
@@ -94,6 +98,12 @@ export interface LegacyPiiDisclosure {
   vault: PiiVaultAccessState;
   rehome: RehomeDisclosure;
   historyMarker: HistoryMarkerDisclosure;
+  /**
+   * T4.6 — whether the legacy source changed after the migration committed.
+   * Value-free: `sources` holds KEY NAMES only. Optional so a caller (or test)
+   * may inject a disclosure without one; an absent value means "no drift".
+   */
+  drift?: MigrationDrift;
 }
 
 export interface LegacyPiiDisclosureOptions {
@@ -181,5 +191,6 @@ export function getLegacyPiiDisclosure(
       state: historyState,
       markerKey: MIGRATION_MARKER_KEY,
     },
+    drift: detectMigrationDrift(read),
   };
 }

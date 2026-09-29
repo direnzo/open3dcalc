@@ -12,6 +12,10 @@ import {
   type HistoryMigrationBackup,
 } from "@/shared/lib/migration/marker";
 import {
+  MIGRATION_FINGERPRINT_KEY,
+  migrationFingerprintValue,
+} from "@/shared/lib/migration/migrationDrift";
+import {
   didPiiWritesCommit,
   getPiiStoreHydrationStatus,
   readPiiPersistedRecord,
@@ -305,6 +309,20 @@ async function migrateLegacyHistory(
   if (context.legacyMarker) {
     guardedStorage.removeItem(MIGRATION_MARKER_KEY);
   }
+
+  // T4.6: register a VALUE-FREE fingerprint of the source just committed so a
+  // later scan can disclose honestly whether the legacy source changed after
+  // this logical commit. Counts only — never a record value. A product source
+  // that was absent or dropped (fully converted) is recorded as `null`.
+  guardedStorage.setItem(
+    MIGRATION_FINGERPRINT_KEY,
+    migrationFingerprintValue(
+      legacyItems.length,
+      legacyProducts === undefined || productsFullyConvertible
+        ? null
+        : legacyProducts.length,
+    ),
+  );
   return true;
 }
 

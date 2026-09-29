@@ -152,8 +152,12 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          # Keyed on package-lock: a Playwright upgrade moves its browser
-          # revision, and a stale cache must not be reused for it.
+          # Keyed on package-lock so a Playwright upgrade (a new hash) never
+          # takes a cache HIT on the previous revision. `restore-keys` may still
+          # RESTORE that previous revision's directory on a miss — that is
+          # intended: `npx playwright install` below then downloads only the
+          # revision the new version actually needs. The key guarantees a stale
+          # directory is never reused AS-IS as if it were the requested one.
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             playwright-${{ runner.os }}-

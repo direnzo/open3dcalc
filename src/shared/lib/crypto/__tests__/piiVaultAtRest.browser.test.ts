@@ -1,6 +1,6 @@
 /**
- * W6 — the browser PII vault against a REAL browser: sealed at rest, and
- * last-writer-wins when two writes go out back to back.
+ * W6 — the browser PII vault against a REAL browser: sealed at rest, and the
+ * write commit order following call order when two writes go out back to back.
  *
  * ## What this spec adds over the jsdom suite
  *
@@ -178,7 +178,7 @@ describe("W6 — the PII vault seals at rest in a real browser", () => {
   });
 });
 
-describe("W6 — the write queue keeps commit order = call order (bdf5d99)", () => {
+describe("W6 — write commit order follows call order in a real browser", () => {
   let harness: PiiVaultBrowserHarness;
 
   beforeEach(async () => {
@@ -198,18 +198,31 @@ describe("W6 — the write queue keeps commit order = call order (bdf5d99)", () 
   });
 
   /**
-   * `bdf5d99`: the vault sealed BEFORE entering the per-key write queue, so
-   * commit order followed WebCrypto COMPLETION order. Two writes issued back to
-   * back resolve out of order often enough that under CI load a stale value
-   * could land last and win. Sealing inside the queue makes the LAST value
-   * ISSUED the one that persists, whatever the crypto finish order is.
+   * An INTEGRATION-level contract guard: with two writes issued back to back,
+   * the store must end up holding the LAST value ISSUED, and both readers (the
+   * vault's `read()` and an independent decrypt of the raw record) must agree.
+   *
+   * This is a guard, NOT a falsifiable regression test for the Wave-5 ordering
+   * fix (squash-merged into `main` as `1b7b885`). Verified empirically: with
+   * that fix reverted, this spec still passes 6/6, because Chromium completes
+   * the two AES-GCM seals in FIFO emission order — so "seal before enqueue"
+   * does NOT invert the commit order in this runtime, and the shapes below
+   * cannot reproduce the pre-fix inversion. What the spec adds is coverage of
+   * the real IndexedDB contract on the runtime that actually ships it.
+   *
+   * The deterministic, falsifiable guard is the unit test in `piiStore.test.ts`
+   * ("commits writers in CALL order, so the last write issued wins"): it runs
+   * against the injected store, where seal completion order is controllable,
+   * and it is the test that fails when the fix is reverted. That is where the
+   * regression is detected; this browser spec keeps the integration behaviour
+   * honest against a real Chromium.
    *
    * The defect was a race, so no single round can be a deterministic RED; the
    * rounds below make the property observable and the expectation exact, and
    * both readers (the vault's `read()` and an independent decrypt of the raw
    * record) must agree.
    */
-  it("keeps the last value issued, in both orders and over repeated rounds", async () => {
+  it("keeps commit order = call order: the last value issued, in both orders and over repeated rounds", async () => {
     const store = createPiiStore(KEY, { indexedDb: harness.indexedDb });
     await unlockPiiStore(KEY, PASS, { indexedDb: harness.indexedDb });
 
@@ -229,16 +242,19 @@ describe("W6 — the write queue keeps commit order = call order (bdf5d99)", () 
   });
 
   /**
-   * The adversarial shape: the FIRST write is the one that takes longest to
-   * seal. Under the old code the small second payload's seal finished first and
-   * was committed first, leaving the big stale payload to commit last and win.
+   * The shape that WOULD be adversarial if seal completion order were free: the
+   * FIRST write is the large one, so "seal before enqueue" would be expected to
+   * let the small second payload's seal win the race. Chromium still seals in
+   * FIFO, so this shape does NOT reproduce the pre-fix inversion (see the
+   * describe docstring and the falsifiable unit guard in `piiStore.test.ts`); it
+   * asserts the property holds under the biggest payload the store can see.
    */
-  it("keeps the last value even when the FIRST write is the slow one to seal", async () => {
+  it("keeps the last value issued in the slow-seal-first shape (Chromium does not invert it)", async () => {
     const store = createPiiStore(KEY, { indexedDb: harness.indexedDb });
     await unlockPiiStore(KEY, PASS, { indexedDb: harness.indexedDb });
 
-    // 64 KiB of filler, generated at run time, so the first seal cannot be the
-    // one that finishes first. No high-entropy literal is committed.
+    // 64 KiB of filler, generated at run time: the two seals differ in size so
+    // the shape is real, without committing a high-entropy literal.
     const bulky = `{"state":{"customers":[{"name":"Lento","notes":"${"z".repeat(
       64 * 1024,
     )}"}]},"version":1}`;

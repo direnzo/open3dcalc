@@ -2,8 +2,9 @@
  * W6 — unlock + rehydrate restore the EXACT persisted state, in a real browser.
  *
  * `rehydratePiiStores()` is the path that decides whether a user's customers
- * come back after a reload, and it is the path `bdf5d99` fixed: a read that
- * raced an in-flight write could return the stale record, so the gate reported
+ * come back after a reload, and it is the path the Wave-5 vault-ordering fix
+ * (squash-merged into `main` as `1b7b885`) hardened: a read that raced an
+ * in-flight write could return the stale record, so the gate reported
  * `hydrated` while the store body came back empty. The jsdom suite covers that
  * with a store double; here the whole lifecycle runs against Chromium's own
  * IndexedDB and Web Crypto, through the same primitives production uses:

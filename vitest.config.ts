@@ -20,8 +20,10 @@ export default defineConfig(
         // and reports `window.isSecureContext` as `undefined`, which the vault's
         // gate correctly treats as a denial. They match the default include glob,
         // so they must be excluded explicitly; the browser config's own `include`
-        // is the other half of the split.
+        // is the other half of the split. Both extensions are excluded so a
+        // future `*.browser.test.tsx` cannot fall into the jsdom suite.
         "src/**/*.browser.test.ts",
+        "src/**/*.browser.test.tsx",
       ],
       coverage: {
         provider: "v8",

@@ -28,9 +28,10 @@ import baseConfig from "./vite.base.config";
 export default defineConfig(
   mergeConfig(baseConfig, {
     test: {
-      // Only the browser specs. `vitest.config.ts` excludes this same glob, so a
-      // file belongs to exactly one suite.
-      include: ["src/**/*.browser.test.ts"],
+      // Only the browser specs. `vitest.config.ts` excludes these same globs, so
+      // a file belongs to exactly one suite. Both extensions are listed so a
+      // future `*.browser.test.tsx` cannot silently fall into the jsdom suite.
+      include: ["src/**/*.browser.test.ts", "src/**/*.browser.test.tsx"],
       browser: {
         enabled: true,
         // Explicit rather than CI-derived: a headless run must never depend on

@@ -16,10 +16,12 @@ Status atual: **evidências e disclosure prontas; tag/deploy aguardam autorizaç
 | Produto        | Open3DCalc                                          |
 | Alvo           | `v2.0.0-beta.5` (canal **beta WEB**)                |
 | Branch         | `fix/beta5-privacy-remediation`                     |
-| Head (SHA)     | `6b1d186df9b125acd3d58dc54e5d9d1bfddc74f5`          |
+| Head (SHA)     | `a7d8aaff6ef0f1cb696f2f1f0a7ba4ce31f802f5`          |
 | PR             | #236                                                |
 | Base           | `main` @ `faa51d2e982ac5672fbcf4e107373c9187244211` |
 | `package.json` | `2.0.0-beta.4`                                      |
+
+> **SHA de release:** será o commit de merge em `main` (a ser registrado no corte da tag).
 
 > A versão em `package.json` ainda é `2.0.0-beta.4`: o **bump para `2.0.0-beta.5` é feito pelo
 > workflow `beta.yml`** no momento do corte da tag (`npm version` + commit + tag anotada). O
@@ -57,21 +59,25 @@ Trabalho de remediação de privacidade do beta, fechado como PR #236:
 
 ## 3. Evidência de gates
 
-### 3.1 CI — run `36568013313` @ `6b1d186`
+### 3.1 CI — run `36572669898` @ `a7d8aaf`
 
 | Job             | Resultado                                                                                               |
 | --------------- | ------------------------------------------------------------------------------------------------------- |
 | `checks`        | ✅ success                                                                                              |
-| `test`          | ✅ success — **272 arquivos / 3847 testes**                                                             |
+| `test`          | ✅ success — **273 arquivos / 3854 testes**                                                             |
 | `build-desktop` | ✅ success                                                                                              |
 | `build-web`     | ⏭️ skipped — **tag-gated por design** (o build web do canal beta só roda via `beta-deploy.yml`, na tag) |
+
+> Runs anteriores nesta branch (superados por este run no SHA final): `36568013313` @ `6b1d186`
+> (`checks`/`test`/`build-desktop` ✅, `test` **272 arquivos / 3847 testes**, `build-web` skipped) e
+> `36569073666` @ `5a431a5`.
 
 ### 3.2 Gates locais
 
 | Gate                                                            | Resultado                                                                  |
 | --------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `test:run`                                                      | ✅ **272 arquivos / 3847 testes** — exit 0 em **2 execuções consecutivas** |
-| `coverage`                                                      | **statements 82.17 / branches 77.14 / functions 78.33 / lines 83**         |
+| `test:run`                                                      | ✅ **273 arquivos / 3854 testes** — exit 0 em **2 execuções consecutivas** |
+| `coverage`                                                      | **statements 82.18 / branches 77.14 / functions 78.33 / lines 83**         |
 | `typecheck` (`tsc --noEmit -p tsconfig.app.json`)               | ✅ exit 0                                                                  |
 | `typecheck:electron` (`tsc -p electron/tsconfig.json --noEmit`) | ✅ exit 0                                                                  |
 | `lint` (ESLint `eslint .`)                                      | ✅ exit 0                                                                  |
@@ -98,13 +104,14 @@ Trabalho de remediação de privacidade do beta, fechado como PR #236:
 
 ## 4. Revisões
 
-| Revisão            | Commit revisado | Veredito             | Achados                | Situação                  |
-| ------------------ | --------------- | -------------------- | ---------------------- | ------------------------- |
-| Themis W3          | `a0a698a`       | **CHANGES_REQUIRED** | HIGH-1, HIGH-2, HIGH-3 | ✅ resolvidos             |
-| Themis full-branch | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                    | ✅ resolvido em `6b1d186` |
+| Revisão                       | Commit revisado | Veredito             | Achados                                    | Situação                                                                         |
+| ----------------------------- | --------------- | -------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
+| Themis W3                     | `a0a698a`       | **CHANGES_REQUIRED** | HIGH-1, HIGH-2, HIGH-3                     | ✅ resolvidos                                                                    |
+| Themis full-branch            | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                                        | ✅ fix inicial em `6b1d186`; fechamento completo em `a7d8aaf`                    |
+| Themis gate final (exact-SHA) | `a7d8aaf`       | **APPROVED**         | H-4 e seu resíduo no caminho do calculador | ✅ fechado (`CalculatorHistoryWriteGate.test.tsx`, falsificabilidade verificada) |
 
-**Pendente:** aprovação da Themis no **exact-SHA final** (`6b1d186`). Enquanto essa revisão no SHA
-exato não ocorrer, o gate de release permanece aberto (§7).
+**Aprovado:** a Themis aprovou o **exact-SHA final** `a7d8aaf` (gate final). O gate de release segue
+aberto apenas para os itens humanos (§7).
 
 ---
 
@@ -129,15 +136,16 @@ exato não ocorrer, o gate de release permanece aberto (§7).
 
 ## 6. Resíduos / limitações conhecidas e follow-ups rastreáveis
 
-| Item                      | Descrição                                                                                                           | Tipo              |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| **W4.4 / T4.4**           | Política do marker `open3dcalc_migration_done_v2` (quando/quando não permanece)                                     | Follow-up         |
-| **T4.5**                  | Cleanup condicional do resíduo apenas quando `COUNT > 0`                                                            | Follow-up         |
-| **T4.6**                  | Drift indicator (sinalizar divergência entre vault e resíduo legado)                                                | Follow-up         |
-| **W6**                    | Harness real de browser + matriz de testes packaged (não construído nesta iteração; **não medido** além do exposto) | Resíduo conhecido |
-| **Re-home desktop / IPC** | Re-home de PII no desktop via IPC — indisponível nesta versão (release web-only)                                    | Follow-up         |
-| **L-1**                   | `PII_SYNC_KEYS` é **export morto** (`src/shared/lib/dataSync.ts`)                                                   | Follow-up         |
-| **L-2**                   | Re-prompt após `keep` (manter read-only) não ocorre nesta versão                                                    | Follow-up         |
+| Item                                   | Descrição                                                                                                                                                                      | Tipo              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
+| **W4.4 / T4.4**                        | Política do marker `open3dcalc_migration_done_v2` (quando/quando não permanece)                                                                                                | Follow-up         |
+| **W4.4 / T4.4 (divergência manifest)** | O manifest declara `persistence: "encrypted_at_rest"` para o marker `open3dcalc_migration_done_v2`, que hoje é **plaintext** — divergência a explicitar no texto de disclosure | Follow-up         |
+| **T4.5**                               | Cleanup condicional do resíduo apenas quando `COUNT > 0`                                                                                                                       | Follow-up         |
+| **T4.6**                               | Drift indicator (sinalizar divergência entre vault e resíduo legado)                                                                                                           | Follow-up         |
+| **W6**                                 | Harness real de browser + matriz de testes packaged (não construído nesta iteração; **não medido** além do exposto)                                                            | Resíduo conhecido |
+| **Re-home desktop / IPC**              | Re-home de PII no desktop via IPC — indisponível nesta versão (release web-only)                                                                                               | Follow-up         |
+| **L-1**                                | `PII_SYNC_KEYS` é **export morto** (`src/shared/lib/dataSync.ts`)                                                                                                              | Follow-up         |
+| **L-2**                                | Re-prompt após `keep` (manter read-only) não ocorre nesta versão                                                                                                               | Follow-up         |
 
 ---
 
@@ -147,7 +155,7 @@ exato não ocorrer, o gate de release permanece aberto (§7).
 | --- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | 1   | Implementação merged                                                                                                              | ⏳ (PR #236 OPEN na base `main`) |
 | 2   | Seis gates verdes (CI `checks`, `test`, `build-desktop`; local `test:run`, `typecheck`/`typecheck:electron`, `lint`, `build:all`) | ✅                               |
-| 3   | Themis aprovada no **exact-SHA** (`6b1d186`)                                                                                      | ⏳                               |
+| 3   | Themis aprovada no **exact-SHA** (`a7d8aaf`)                                                                                      | ✅                               |
 | 4   | Disclosure publicada (§5 nas release notes)                                                                                       | ⏳                               |
 | 5   | Tag/deploy autorizado por humano                                                                                                  | ⏳                               |
 

@@ -63,6 +63,16 @@ export function rendererReportAdapter(
  * The deletes are deliberately NOT wrapped in one transaction: a table absent
  * from an older profile must not abort the purge of the tables that are there.
  * Per-table isolation is the idempotence the resume rule depends on.
+ *
+ * T4.5 — the delete is GATED on `COUNT > 0`. The domain tables are empty by
+ * construction in any repo-built profile (breakdown §5.4), so this cleanup is a
+ * scan-and-report, never a delete-by-default: a table that holds no rows is
+ * never issued a `DELETE` at all. A nonzero count is a genuine finding (a
+ * non-repo build, a manual edit, a future writer) and is surfaced as such by
+ * the §6 `rescan` below and by the ADR-002 §2.3 scan report — never silently
+ * cleared. The gate is per-table and lives ONLY here: the migration/re-home
+ * paths are copy-without-delete and never import this adapter
+ * (`sqliteDomainTablesAdapter` is wired only into the SPEC-02 erasure saga).
  */
 export function sqliteDomainTablesAdapter(
   db: MinimalStorageDb,
@@ -73,6 +83,15 @@ export function sqliteDomainTablesAdapter(
       let deleted = 0;
       for (const table of PII_ERASURE_TABLES) {
         try {
+          // T4.5: read the count BEFORE deleting. An empty table is skipped
+          // entirely — no `DELETE` statement is prepared for it — so the
+          // cleanup can never read as a delete-by-default.
+          const count = (
+            db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as {
+              c: number;
+            }
+          ).c;
+          if (count === 0) continue;
           deleted += (
             db.prepare(`DELETE FROM ${table}`).run() as { changes: number }
           ).changes;

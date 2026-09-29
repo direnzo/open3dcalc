@@ -1303,6 +1303,84 @@ describe("useAppInit tutorial auto-start", () => {
     await expect(vaultHistoryEntries()).resolves.toHaveLength(2);
   });
 
+  it("does not duplicate an id-less legacy record already in the store on resume", async () => {
+    const historyKey = "open3dcalc_history_v2";
+    const recoveryKey = "open3dcalc_migration_progress_v2";
+    const result = {
+      totalCost: 4,
+      sellPrice: 8,
+      profit: 4,
+      materialCost: 2,
+      energyCost: 0.5,
+      machineCost: 0.5,
+      hardwareCost: 0,
+      consumablesCost: 0,
+      laborCost: 0.5,
+      softwareCost: 0,
+      failureCost: 0,
+      extrasCost: 0,
+      postProcessingCost: 0.5,
+      subtotal: 4,
+      marketplaceFee: 0,
+      taxAmount: 0,
+      costPerGram: 0.08,
+      costPerUnit: 4,
+      unitWeight: 50,
+      estimatedPrintTime: 1,
+      targetMarginPercent: 50,
+      breakEvenPrice: 4,
+      actualMargin: 50,
+      carbonFootprintGrams: 1,
+    };
+    // The legacy record carries NO id — a shape an old build could produce.
+    storageValues.set(
+      historyKey,
+      JSON.stringify([
+        {
+          timestamp: 1_700_000_000_951,
+          type: "fdm",
+          summary: "Sem id • legado",
+          totalCost: 4,
+          sellPrice: 8,
+          profit: 4,
+          result,
+          snapshot: null,
+        },
+      ]),
+    );
+    storageValues.set(
+      recoveryKey,
+      JSON.stringify({ type: "open3dcalc-history-v2-progress", v: 1 }),
+    );
+
+    await unlockVault();
+
+    // The interrupted run already converted and stored this record; `addEntry`
+    // assigned it a GENERATED id, so an id-set cannot recognize it on resume.
+    const alreadyMigrated: HistoryEntry = {
+      id: "hist_seeded_generated_01",
+      timestamp: 1_700_000_000_951,
+      type: "fdm",
+      name: "Sem id • legado",
+      summary: "Sem id • legado",
+      totalCost: 4,
+      sellPrice: 8,
+      profit: 4,
+      result,
+      snapshot: null,
+    };
+    useHistoryStore.setState({ entries: [alreadyMigrated] });
+    await settleWrites();
+
+    renderHook(() => useAppInit(vi.fn()));
+    await vi.waitFor(() => expect(storageValues.has(recoveryKey)).toBe(false));
+    await settleWrites();
+
+    const entries = useHistoryStore.getState().entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].id).toBe("hist_seeded_generated_01");
+  });
+
   it("clears the value-free progress marker when no legacy source remains", async () => {
     const progressKey = "open3dcalc_migration_progress_v2";
     // An interrupted run left the value-free flag, but the source is gone (a

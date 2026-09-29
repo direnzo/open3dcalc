@@ -101,6 +101,42 @@ function parseArrayOrUndefined(raw: string | null): unknown[] | undefined {
   }
 }
 
+/**
+ * A stable content signature for a history record that does NOT depend on its
+ * id.
+ *
+ * A legacy record may omit the id; `addEntry` then assigns a GENERATED id that
+ * differs on every run, so an id set alone cannot recognize the record an
+ * interrupted run already added and the merge would duplicate it on every
+ * resume. Two records with the same content produce the same signature, which
+ * is what makes the id-less half of the merge idempotent. Value-preserving:
+ * every persisted field that is not the id participates, and nothing is
+ * invented.
+ */
+function entrySignature(entry: {
+  timestamp?: number;
+  type?: "fdm" | "resin";
+  name?: string;
+  summary?: string;
+  totalCost?: number;
+  sellPrice?: number;
+  profit?: number;
+  result?: unknown;
+  snapshot?: unknown;
+}): string {
+  return JSON.stringify([
+    entry.timestamp ?? null,
+    entry.type ?? null,
+    entry.name ?? null,
+    entry.summary ?? null,
+    entry.totalCost ?? null,
+    entry.sellPrice ?? null,
+    entry.profit ?? null,
+    entry.result ?? null,
+    entry.snapshot ?? null,
+  ]);
+}
+
 const FALLBACK_RESULT: CalculationResult = {
   materialCost: 0,
   energyCost: 0,
@@ -196,12 +232,23 @@ async function migrateLegacyHistory(
   // means the legacy source still holds the same record. Skipping a known id
   // keeps the union lossless and duplicate-free.
   const seenIds = new Set(baseEntries.map((entry) => entry.id));
+  // Id-less half of the guard (F3): a legacy record without an id gets a
+  // GENERATED id on every run, so `seenIds` cannot match it. The stable content
+  // signature can, which is what keeps the merge idempotent for that shape too.
+  const seenSignatures = new Set(
+    baseEntries.map((entry) => entrySignature(entry)),
+  );
   for (const entry of entries) {
-    if (entry.id !== undefined && seenIds.has(entry.id)) continue;
+    if (entry.id !== undefined) {
+      if (seenIds.has(entry.id)) continue;
+    } else if (seenSignatures.has(entrySignature(entry))) {
+      continue;
+    }
     const id = historyStore.addEntry(entry);
     const migrated = historyStore.getEntry(id);
     if (!migrated) return false;
     if (entry.id !== undefined) seenIds.add(entry.id);
+    seenSignatures.add(entrySignature(migrated));
     expected.push({
       id,
       timestamp: entry.timestamp ?? migrated.timestamp,

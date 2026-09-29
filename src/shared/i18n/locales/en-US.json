@@ -1142,6 +1142,28 @@
       "section8Item4": "You can encrypt bundles with your own password",
       "section8Lgpd": "In compliance with LGPD Art. 18 (right to data portability), you can export your data at any time and import it on another device."
     },
+    "migration": {
+      "title": "Old data in plaintext",
+      "intro": "We found {{count}} personal-data record(s) written in plaintext by older versions. Nothing has been migrated or deleted: choose what to do.",
+      "optionMigrate": "Migrate to the encrypted vault",
+      "optionMigrateHint": "Copies the records into encrypted storage and keeps the plaintext source (nothing is deleted).",
+      "optionKeep": "Keep read-only",
+      "optionKeepHint": "Does not migrate anything now. The legacy data stays in plaintext and remains disclosed on this screen.",
+      "optionExport": "Export my data",
+      "optionExportHint": "Opens the existing export flow. Requires the vault to be unlocked.",
+      "optionDelete": "Eliminate legacy data",
+      "optionDeleteHint": "Destructive action.",
+      "optionCancel": "Not now",
+      "working": "Migrating…",
+      "keptReadOnly": "Nothing was migrated. The legacy data stays in plaintext and remains disclosed on the privacy screen.",
+      "exportBlocked": "The vault is locked. Unlock it with your passphrase to export.",
+      "deleteUnavailable": "Elimination is unavailable in this version: there is no verified erasure for these keys yet. Nothing is deleted silently.",
+      "resultMigrated": "Migration completed and verified. The records are in the encrypted vault; the plaintext source was kept.",
+      "resultVaultLocked": "Migration refused: the vault is locked. Unlock it with your passphrase and try again. Nothing was written.",
+      "resultNothingToMigrate": "Nothing to migrate: there are no recognisable legacy records.",
+      "resultIncomplete": "The migration was neither completed nor verified. Nothing was deleted; please try again.",
+      "close": "Close"
+    },
     "quarantine": {
       "title": "Legacy data quarantine",
       "subtitle": "Personal data written in plaintext by older versions is quarantined: readable, but blocked from new writes until you choose to migrate (encrypt) or eliminate it.",

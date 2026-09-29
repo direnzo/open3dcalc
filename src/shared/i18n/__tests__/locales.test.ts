@@ -632,6 +632,62 @@ const VAULT_KEYS = [
 
 const VAULT_DETAIL_KEYS = ["unlockErrorDetail", "unavailableDetail"] as const;
 
+/**
+ * T5.2 — the legacy-migration choice dialog. Every string it renders goes
+ * through `t("privacy.migration.*")`. The `intro` is interpolated, so its
+ * placeholder is asserted rather than the literal. The key sets are compared
+ * for EXACT parity, because a key present in only one locale renders as a raw
+ * key for every user of that locale.
+ */
+const MIGRATION_KEYS = [
+  "title",
+  "intro",
+  "optionMigrate",
+  "optionMigrateHint",
+  "optionKeep",
+  "optionKeepHint",
+  "optionExport",
+  "optionExportHint",
+  "optionDelete",
+  "optionDeleteHint",
+  "optionCancel",
+  "working",
+  "keptReadOnly",
+  "exportBlocked",
+  "deleteUnavailable",
+  "resultMigrated",
+  "resultVaultLocked",
+  "resultNothingToMigrate",
+  "resultIncomplete",
+  "close",
+] as const;
+
+describe("i18n locales (privacy.migration.*) — T5.2 choice dialog", () => {
+  it.each([
+    ["pt-BR", ptBR],
+    ["en-US", enUS],
+  ])("resolves every privacy.migration.* key in %s", (_locale, dict) => {
+    for (const key of MIGRATION_KEYS) {
+      const value = resolve(dict, ["privacy", "migration", key]);
+      expect(typeof value, `privacy.migration.${key}`).toBe("string");
+      expect((value as string).length).toBeGreaterThan(0);
+    }
+    const intro = resolve(dict, ["privacy", "migration", "intro"]);
+    expect(intro as string, "privacy.migration.intro").toContain("{{count}}");
+  });
+
+  it("keeps exact key parity between pt-BR and en-US", () => {
+    const ptKeys = Object.keys(
+      resolve(ptBR, ["privacy", "migration"]) as Record<string, unknown>,
+    ).sort();
+    const enKeys = Object.keys(
+      resolve(enUS, ["privacy", "migration"]) as Record<string, unknown>,
+    ).sort();
+    expect(ptKeys).toEqual(enKeys);
+    expect(ptKeys).toEqual([...MIGRATION_KEYS].sort());
+  });
+});
+
 describe("i18n locales (privacy.vault.*) — T3.3 locked shell", () => {
   it.each([
     ["pt-BR", ptBR],

@@ -49,6 +49,14 @@ vi.mock("@/shared/components/Catalog/ProductInventory", () => ({
 vi.mock("@/shared/components/Privacy/PrivacyScreen", () => ({
   PrivacyScreen: () => <div>PrivacyScreen</div>,
 }));
+// The privacy onboarding surface and the migration prompt are covered by their
+// own suites; stub them so this shell smoke test stays about the shell.
+vi.mock("@/shared/components/ui/ConsentModal", () => ({
+  ConsentModal: () => null,
+}));
+vi.mock("@/shared/components/Privacy/LegacyMigrationPrompt", () => ({
+  LegacyMigrationPrompt: () => null,
+}));
 vi.mock("@/shared/components/Calculator/QuoteSection", () => ({
   QuoteSection: () => <div>QuoteSection</div>,
 }));

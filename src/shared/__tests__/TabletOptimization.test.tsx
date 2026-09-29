@@ -33,6 +33,15 @@ vi.mock("@/shared/components/Calculator/Calculator", () => ({
 vi.mock("@/shared/stores/storeBridge", () => ({
   restoreAutoSnapshot: vi.fn(),
 }));
+// The first-run consent modal and the legacy migration prompt are covered by
+// their own suites; stub them so the shell queries below don't match the modal
+// dialog instead of the surface under test.
+vi.mock("@/shared/components/ui/ConsentModal", () => ({
+  ConsentModal: () => null,
+}));
+vi.mock("@/shared/components/Privacy/LegacyMigrationPrompt", () => ({
+  LegacyMigrationPrompt: () => null,
+}));
 vi.mock("@/shared/stores/historyStore", () => ({
   useHistoryStore: Object.assign(
     vi.fn(() => ({

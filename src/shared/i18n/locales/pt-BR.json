@@ -1142,6 +1142,28 @@
       "section8Item4": "Você pode criptografar os pacotes com sua própria senha",
       "section8Lgpd": "Em conformidade com o Art. 18 da LGPD (direito à portabilidade dos dados), você pode exportar seus dados a qualquer momento e importá-los em outro dispositivo."
     },
+    "migration": {
+      "title": "Dados antigos em texto puro",
+      "intro": "Encontramos {{count}} registro(s) de dados pessoais gravados em texto puro por versões anteriores. Nada foi migrado nem apagado: escolha o que fazer.",
+      "optionMigrate": "Migrar para o cofre criptografado",
+      "optionMigrateHint": "Copia os registros para o armazenamento criptografado e mantém a origem em texto puro (nada é apagado).",
+      "optionKeep": "Manter somente leitura",
+      "optionKeepHint": "Não migra nada agora. O dado legado continua em texto puro e permanece divulgado nesta tela.",
+      "optionExport": "Exportar meus dados",
+      "optionExportHint": "Abre o fluxo de exportação existente. Requer o cofre desbloqueado.",
+      "optionDelete": "Eliminar os dados legados",
+      "optionDeleteHint": "Ação destrutiva.",
+      "optionCancel": "Agora não",
+      "working": "Migrando…",
+      "keptReadOnly": "Nada foi migrado. O dado legado permanece em texto puro e continua divulgado na tela de privacidade.",
+      "exportBlocked": "O cofre está bloqueado. Desbloqueie com sua senha para exportar.",
+      "deleteUnavailable": "Eliminação indisponível nesta versão: ainda não existe um apagamento verificado apenas para essas chaves. Nada é apagado silenciosamente.",
+      "resultMigrated": "Migração concluída e verificada. Os registros estão no cofre criptografado; a origem em texto puro foi mantida.",
+      "resultVaultLocked": "Migração recusada: o cofre está bloqueado. Desbloqueie com sua senha e tente novamente. Nada foi escrito.",
+      "resultNothingToMigrate": "Nada a migrar: não há registros legados reconhecíveis.",
+      "resultIncomplete": "A migração não foi concluída nem verificada. Nada foi apagado; tente novamente.",
+      "close": "Fechar"
+    },
     "quarantine": {
       "title": "Quarentena de dados legados",
       "subtitle": "Dados pessoais gravados em texto puro por versões antigas ficam em quarentena: legíveis, mas bloqueados para novas gravações até você escolher migrar (criptografar) ou eliminar.",

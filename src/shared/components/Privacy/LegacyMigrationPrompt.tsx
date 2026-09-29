@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useConsentStore } from "@/shared/stores/consentStore";
-import { detectLegacyPlaintextPii } from "@/shared/lib/legacyPiiPlaintext";
+import { useLegacyPiiResidue } from "@/shared/hooks/useLegacyPiiResidue";
 import {
   residueSignature,
   useLegacyKeepReadOnlyStore,
@@ -21,6 +21,11 @@ import { LegacyMigrationDialog } from "./LegacyMigrationDialog";
  * when the residue CHANGES (signature mismatch) — and the Privacy screen can
  * clear the decision to reopen the choice. "Not now" still dismisses for the
  * session only: it is not an answer, so nothing is persisted.
+ *
+ * The residue source is desktop-aware: `useLegacyPiiResidue` merges the SQLite
+ * legacy rows (read-only, over IPC) over `localStorage`, so a legacy desktop
+ * profile — whose residue the persistence bridge never hydrates — still gets the
+ * prompt instead of silently keeping it invisible.
  */
 export function LegacyMigrationPrompt() {
   const migrationConsentGiven = useConsentStore((s) => s.migrationConsentGiven);
@@ -30,10 +35,10 @@ export function LegacyMigrationPrompt() {
   const [keptThisSession, setKeptThisSession] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
 
-  // Re-read on every render: the residue is copy-without-delete, so it stays
-  // present until the user acts, and an unlock elsewhere must be able to make
-  // the prompt actionable again without a remount.
-  const report = detectLegacyPlaintextPii();
+  // Desktop-aware and re-read on every change: the residue is
+  // copy-without-delete, so it stays present until the user acts, and an unlock
+  // elsewhere must be able to make the prompt actionable again without a remount.
+  const report = useLegacyPiiResidue();
   const signature = residueSignature(report);
   // A stored decision hides the prompt only while the residue is UNCHANGED.
   // `keptThisSession` keeps the confirmation visible on the run where the user

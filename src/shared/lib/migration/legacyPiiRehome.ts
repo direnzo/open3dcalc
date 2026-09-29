@@ -40,11 +40,18 @@
  * never replace the destination with an empty value, and the migration never
  * claims completion it did not achieve.
  *
- * ## Desktop is deferred
+ * ## Desktop re-home (same semantics, different source)
  *
- * Beta 5 is the web release. The Electron re-home path (SQLite domain tables
- * plus the `enc1:` legacy blobs) is a separate wave and is intentionally NOT
- * implemented here; this module reads and writes the browser surfaces only.
+ * On desktop the three migrated PII keys live as SQLite `storage` rows that the
+ * `persistence-bridge` deliberately stops hydrating, so a legacy profile has the
+ * same defect with a different source: the residue is retained in SQLite but
+ * invisible to the renderer. This module is the ONE implementation of the
+ * re-home; `options.fetchLegacy` supplies the desktop residue over the
+ * read-only `privacy:legacy-rows` IPC and the rest of the contract — consent,
+ * fail-closed vault check, copy-without-delete, verify-before-complete,
+ * idempotency — is unchanged. When the sync `read` finds no residue and
+ * `fetchLegacy` is absent the injected default reads the desktop rows; on the
+ * web that default resolves to `null` and the `localStorage` path is untouched.
  */
 
 import { guardedStorage } from "@/shared/lib/manifestStorage";
@@ -52,6 +59,10 @@ import {
   detectLegacyPlaintextPii,
   type LegacyPiiPlaintextKey,
 } from "@/shared/lib/legacyPiiPlaintext";
+import {
+  fetchDesktopLegacyPiiRows,
+  type LegacyPiiRowMap,
+} from "@/shared/lib/migration/desktopLegacyRows";
 import {
   didPiiWritesCommit,
   getPiiStoreAccessState,
@@ -118,6 +129,14 @@ export interface LegacyPiiRehomeOptions {
    * the manifest-gated `localStorage` facade.
    */
   read?: (key: string) => string | null;
+  /**
+   * Async source of the legacy residue, consulted ONLY when the sync `read`
+   * finds none. This is the DESKTOP source: the residue is in SQLite rows the
+   * persistence bridge never hydrates, so it must be fetched over IPC. Defaults
+   * to the read-only `privacy:legacy-rows` reader, which resolves to `null` on
+   * the web — so the browser path is unchanged.
+   */
+  fetchLegacy?: () => Promise<LegacyPiiRowMap | null>;
 }
 
 function rehomeResult(
@@ -241,6 +260,33 @@ async function vaultHolds(
 }
 
 /**
+ * Resolve the reader the re-home will actually use.
+ *
+ * The web path wins whenever the sync `read` finds residue: that data is the
+ * user's, in `localStorage`, and there is no reason to touch IPC. Only when the
+ * sync read finds NOTHING is the async source consulted — the desktop case,
+ * where the residue is in SQLite. A `null` (or throwing) async source means
+ * "no desktop source", so the sync reader is returned unchanged and the caller
+ * reports `no_residue` honestly.
+ */
+async function resolveLegacyRead(
+  localRead: (key: string) => string | null,
+  fetchLegacy: (() => Promise<LegacyPiiRowMap | null>) | undefined,
+): Promise<(key: string) => string | null> {
+  if (detectLegacyPlaintextPii(localRead).present) return localRead;
+
+  const fetch = fetchLegacy ?? fetchDesktopLegacyPiiRows;
+  let rows: LegacyPiiRowMap | null = null;
+  try {
+    rows = await fetch();
+  } catch {
+    rows = null;
+  }
+  if (!rows) return localRead;
+  return (key) => rows[key as LegacyPiiPlaintextKey] ?? localRead(key);
+}
+
+/**
  * Re-home the legacy plaintext residue into the vault.
  *
  * See the module header for the full contract. Returns a value-free outcome; it
@@ -251,10 +297,12 @@ async function vaultHolds(
 export async function migrateLegacyPlaintextPiiToVault(
   options: LegacyPiiRehomeOptions = {},
 ): Promise<LegacyPiiRehomeResult> {
-  const read = options.read ?? ((key: string) => guardedStorage.getItem(key));
-
   // 5 (first): a verified run already happened — do not touch anything.
   if (isRehomeComplete()) return rehomeResult("already_migrated");
+
+  const localRead =
+    options.read ?? ((key: string) => guardedStorage.getItem(key));
+  const read = await resolveLegacyRead(localRead, options.fetchLegacy);
 
   const report = detectLegacyPlaintextPii(read);
   if (!report.present) return rehomeResult("no_residue");

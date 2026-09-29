@@ -19,16 +19,16 @@ Status atual: **evidências e disclosure prontas; tag/deploy aguardam autorizaç
 | Head (SHA)     | `a7d8aaff6ef0f1cb696f2f1f0a7ba4ce31f802f5`          |
 | PR             | #236                                                |
 | Base           | `main` @ `faa51d2e982ac5672fbcf4e107373c9187244211` |
-| `package.json` | `2.0.0-beta.4`                                      |
+| `package.json` | `2.0.0-beta.5`                                      |
 
 > **SHA de release:** será o commit de merge em `main` (a ser registrado no corte da tag).
 
 > **Branch de resíduos W4** (`fix/beta5-privacy-w4-residuals`): fecha os follow-ups W4.4/T4.4, T4.6,
 > L-1 e L-2 e reconcilia a tabela do §6 (ver também a disclosure do §5).
 
-> A versão em `package.json` ainda é `2.0.0-beta.4`: o **bump para `2.0.0-beta.5` é feito pelo
-> workflow `beta.yml`** no momento do corte da tag (`npm version` + commit + tag anotada). O
-> repositório não bumpa a versão manualmente.
+> A versão em `package.json` é a linha `2.0.0-beta.5`: o **bump é feito pelo workflow `beta.yml`**
+> no momento do corte da tag (`npm version` + commit + tag anotada). O repositório não bumpa a
+> versão manualmente.
 
 ---
 

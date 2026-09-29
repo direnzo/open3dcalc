@@ -64,14 +64,24 @@ import {
 } from "./piiStoreCapability.js";
 
 /**
- * The three ACTIVE browser PII keys, in a fixed order. The order is part of the
- * contract: `rehydratePiiStores()` reports outcomes in this order, so a caller
- * reads the same list in the same sequence every run.
+ * The three ACTIVE browser PII keys, named once so a surface can ask about the
+ * store it writes to without hardcoding the raw vault key a second time.
+ */
+export const PII_STORE_KEY = {
+  customers: "open3dcalc_customers_v1",
+  quotes: "open3dcalc_quotes_v1",
+  history: "open3dcalc_history_v2",
+} as const;
+
+/**
+ * The three keys in a fixed order. The order is part of the contract:
+ * `rehydratePiiStores()` reports outcomes in this order, so a caller reads the
+ * same list in the same sequence every run.
  */
 export const PII_STORE_KEYS = [
-  "open3dcalc_customers_v1",
-  "open3dcalc_quotes_v1",
-  "open3dcalc_history_v2",
+  PII_STORE_KEY.customers,
+  PII_STORE_KEY.quotes,
+  PII_STORE_KEY.history,
 ] as const;
 
 export type PiiStoreKey = (typeof PII_STORE_KEYS)[number];
@@ -101,11 +111,42 @@ const persistHandles = new Map<string, PiiPersistHandle>();
 let runtimeOptions: PiiStoreOptions = {};
 
 /**
- * The last refused write, for a UI that must show WHY nothing was saved. Never
- * carries a value: key names and typed reasons only (TEST-MATRIX §3.2).
+ * A refused write, for a UI that must show WHY nothing was saved. Never carries
+ * a value: a key NAME and a typed reason only (TEST-MATRIX §3.2).
  */
-let lastWriteRefusal: { key: string; reason: PiiStoreDenialReason } | null =
-  null;
+export interface PiiWriteRefusal {
+  key: string;
+  reason: PiiStoreDenialReason;
+}
+
+/**
+ * The last refused write, or null. A refusAL that only a test can observe is a
+ * silent failure in production, so a UI surface subscribes (see
+ * `subscribePiiWriteRefusals`) and renders this the moment it is set.
+ */
+let lastWriteRefusal: PiiWriteRefusal | null = null;
+
+const refusalListeners = new Set<() => void>();
+
+function setLastWriteRefusal(refusal: PiiWriteRefusal | null): void {
+  lastWriteRefusal = refusal;
+  for (const listener of refusalListeners) listener();
+}
+
+/**
+ * Subscribe to write refusals. Returns the unsubscribe function.
+ *
+ * This is the seam between the non-React gate and a React surface: a refusal is
+ * recorded outside React (inside a store `set`), so it is published through a
+ * listener set rather than a store subscription. The listener count is tiny
+ * (one per mounted PII surface) and cleared when the surface unmounts.
+ */
+export function subscribePiiWriteRefusals(listener: () => void): () => void {
+  refusalListeners.add(listener);
+  return () => {
+    refusalListeners.delete(listener);
+  };
+}
 
 /**
  * The environment the gate hands to the vault when it creates a handle.
@@ -135,11 +176,54 @@ export function getPiiStoreHydrationStatus(key: string): PiiHydrationStatus {
 }
 
 /** The last refused write, or null. Reason is always a typed constant. */
-export function getLastPiiWriteRefusal(): {
-  key: string;
-  reason: PiiStoreDenialReason;
-} | null {
+export function getLastPiiWriteRefusal(): PiiWriteRefusal | null {
   return lastWriteRefusal;
+}
+
+/**
+ * Record a refusal for a write the UI preempted before it reached the vault.
+ *
+ * The gate records a refusal itself when `requireHydrated()` rejects a store
+ * write. But a PII surface also blocks the USER action before it mutates the
+ * store (so an entry is never shown as if saved), and that path still has to
+ * publish the same refusal to the same consumer. One setter, one event.
+ */
+export function recordPiiWriteRefusal(
+  key: string,
+  reason: PiiStoreDenialReason,
+): void {
+  setLastWriteRefusal({ key, reason });
+}
+
+/**
+ * The reason a USER-initiated write to a PII store must be blocked, or null.
+ *
+ * A demo session is ephemeral BY DESIGN (`demo_session`): it is not a failure,
+ * so it does not block — the demo dataset still writes in memory and the LGPD
+ * contract is unchanged. Every other not-yet-hydrated state (locked, consent
+ * declined, no capability) blocks the user action before it can mutate the
+ * store, because the vault would refuse the write and the entry would vanish on
+ * reload. This is the honest answer to "may this surface accept an entry now?".
+ */
+export function getPiiSurfaceWriteBlockReason(
+  key: string,
+): PiiStoreDenialReason | null {
+  if (getPiiStoreHydrationStatus(key) === "hydrated") return null;
+  const reason = refusalForUnhydrated();
+  return reason === "demo_session" ? null : reason;
+}
+
+/**
+ * Block a PII surface write, recording the refusal for the visible consumer.
+ *
+ * Call BEFORE mutating the store. A non-null return means the caller must
+ * abort: the entry was never accepted, so nothing is shown as saved, nothing is
+ * persisted, and the returned (recorded) reason is what the surface renders.
+ */
+export function beginPiiSurfaceWrite(key: string): PiiStoreDenialReason | null {
+  const reason = getPiiSurfaceWriteBlockReason(key);
+  if (reason !== null) recordPiiWriteRefusal(key, reason);
+  return reason;
 }
 
 /**
@@ -317,13 +401,13 @@ export function gatedPiiPersistStorage<S>(
 
   function refuseUnhydrated(): PiiStoreDeniedError {
     const error = new PiiStoreDeniedError(refusalForUnhydrated());
-    lastWriteRefusal = { key, reason: error.reason };
+    setLastWriteRefusal({ key, reason: error.reason });
     return error;
   }
 
   function recordIfDenied(error: unknown): void {
     if (error instanceof PiiStoreDeniedError) {
-      lastWriteRefusal = { key, reason: error.reason };
+      setLastWriteRefusal({ key, reason: error.reason });
     }
   }
 
@@ -406,6 +490,11 @@ export async function rehydratePiiStores(): Promise<PiiRehydrateOutcome[]> {
 
     if (!threw && handle.hasHydrated()) {
       hydrationStates.set(key, "hydrated");
+      // A store that is now readable and writable can no longer refuse a write
+      // for hydration reasons, so a refusal recorded against THIS key (locked,
+      // failed, not-yet-hydrated) is stale and must stop being shown. Clearing
+      // it here is what makes the notice disappear after a successful unlock.
+      if (lastWriteRefusal?.key === key) setLastWriteRefusal(null);
       outcomes.push({ key, status: "hydrated" });
     } else {
       // Fail-closed: drop any held key so even a direct vault write refuses,

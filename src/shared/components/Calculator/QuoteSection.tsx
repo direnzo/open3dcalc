@@ -3,6 +3,11 @@ import { useTranslation } from "react-i18next";
 import { useQuoteStore } from "@/shared/stores/quoteStore";
 import { useCustomerStore } from "@/shared/stores/customerStore";
 import { useHistoryStore } from "@/shared/stores/historyStore";
+import {
+  PII_STORE_KEY,
+  beginPiiSurfaceWrite,
+} from "@/shared/lib/crypto/piiStoreHydration";
+import { PiiWriteRefusalNotice } from "@/shared/components/Privacy/PiiWriteRefusalNotice";
 import { useCurrency } from "@/shared/hooks/useCurrency";
 import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { Select } from "@/shared/components/ui/Select";
@@ -248,6 +253,10 @@ function QuoteFormModal({
     }
     setError(null);
 
+    // H-4: block a locked/unavailable vault BEFORE the quote enters memory, so
+    // the form keeps the user's input and the notice says nothing was saved.
+    if (beginPiiSurfaceWrite(PII_STORE_KEY.quotes) !== null) return;
+
     const formData: QuoteFormData = {
       title: title.trim(),
       customerId: customerId || undefined,
@@ -293,6 +302,7 @@ function QuoteFormModal({
       wide
     >
       <div className="space-y-5">
+        <PiiWriteRefusalNotice storeKey={PII_STORE_KEY.quotes} />
         {/* Title */}
         <div>
           <label className="text-[12px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] block mb-1.5">
@@ -911,6 +921,7 @@ export function QuoteSection({ locale: localeProp }: { locale?: string } = {}) {
       </div>
 
       {/* Filters */}
+      {!showForm && <PiiWriteRefusalNotice storeKey={PII_STORE_KEY.quotes} />}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap mb-4">
         <div
           className="flex gap-2 overflow-x-auto pb-1 sm:pb-0"

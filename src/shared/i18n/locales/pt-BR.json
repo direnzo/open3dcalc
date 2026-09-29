@@ -1211,7 +1211,7 @@
     "vault": {
       "ariaLabel": "Dados pessoais bloqueados",
       "lockedTitle": "Seus dados pessoais estão bloqueados",
-      "lockedMessage": "Clientes, orçamentos e histórico estão criptografados e não carregam sem a sua senha. Nada foi apagado. Desbloqueie para esta sessão para vê-los novamente.",
+      "lockedMessage": "Clientes, orçamentos e histórico estão criptografados e não carregam sem a sua senha. Nada foi apagado. Enquanto o perfil estiver bloqueado, NOVAS entradas não serão salvas. Desbloqueie para esta sessão para vê-las novamente.",
       "createTitle": "Crie a senha do seu perfil",
       "createMessage": "Este perfil ainda não tem senha. Escolha uma para criptografar clientes, orçamentos e histórico neste dispositivo. Ela nunca é gravada e não sai desta sessão.",
       "passphraseLabel": "Senha do perfil",
@@ -1229,8 +1229,11 @@
       "unlockError": "Não foi possível desbloquear.",
       "unlockErrorDetail": "Motivo: {{reason}}",
       "unavailableTitle": "Dados pessoais indisponíveis neste ambiente",
-      "unavailableMessage": "Este ambiente não consegue proteger dados pessoais (sem criptografia ou armazenamento seguro), então clientes, orçamentos e histórico não são exibidos nem gravados. Nada foi apagado.",
-      "unavailableDetail": "Motivo: {{reason}}"
+      "unavailableMessage": "Este ambiente não consegue proteger dados pessoais (sem criptografia ou armazenamento seguro), então clientes, orçamentos e histórico não são exibidos nem gravados. Nada foi apagado. NOVAS entradas não serão salvas aqui.",
+      "unavailableDetail": "Motivo: {{reason}}",
+      "writeRefusedTitle": "Entradas novas não foram salvas",
+      "writeRefusedMessage": "Não foi possível salvar em {{area}}: o perfil está bloqueado ou a proteção de dados está indisponível ({{reason}}). A entrada NÃO foi salva e será perdida ao recarregar. Desbloqueie o perfil para salvar.",
+      "writeRefusedAreaUnknown": "dados pessoais"
     },
     "residue": {
       "title": "Dados legados em texto puro",

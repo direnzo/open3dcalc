@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useCustomerStore } from "@/shared/stores/customerStore";
+import {
+  PII_STORE_KEY,
+  beginPiiSurfaceWrite,
+} from "@/shared/lib/crypto/piiStoreHydration";
+import { PiiWriteRefusalNotice } from "@/shared/components/Privacy/PiiWriteRefusalNotice";
 import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import {
   Users,
@@ -140,6 +145,8 @@ function CustomerFormModal({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        <PiiWriteRefusalNotice storeKey={PII_STORE_KEY.customers} />
 
         <div className="space-y-3">
           <div>
@@ -287,6 +294,12 @@ export function CustomerTab() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // A locked/unavailable vault refuses the import at persistence; block it
+    // here so the import reports a refusal instead of appearing to succeed.
+    if (beginPiiSurfaceWrite(PII_STORE_KEY.customers) !== null) {
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
@@ -310,6 +323,11 @@ export function CustomerTab() {
   };
 
   const handleSave = (data: CustomerFormData) => {
+    // H-4: a locked/unavailable vault must not accept a new entry into memory.
+    // The write would be refused by the gate and the entry would vanish on
+    // reload. Block it here, keep the form open, and let the notice explain
+    // that nothing was saved — instead of pretending success.
+    if (beginPiiSurfaceWrite(PII_STORE_KEY.customers) !== null) return;
     try {
       if (editingCustomer) {
         store.updateCustomer(editingCustomer.id, data);
@@ -364,6 +382,9 @@ export function CustomerTab() {
       </div>
 
       {/* Search */}
+      {!formOpen && (
+        <PiiWriteRefusalNotice storeKey={PII_STORE_KEY.customers} />
+      )}
       <div className="relative mb-4">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)]" />
         <input

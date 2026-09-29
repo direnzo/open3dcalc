@@ -628,9 +628,17 @@ const VAULT_KEYS = [
   "unlockError",
   "unavailableTitle",
   "unavailableMessage",
+  // H-4 — the write-refusal consumer. A missing key would render the raw key
+  // on the surface that exists precisely to make a refused PII write visible.
+  "writeRefusedTitle",
+  "writeRefusedAreaUnknown",
 ] as const;
 
-const VAULT_DETAIL_KEYS = ["unlockErrorDetail", "unavailableDetail"] as const;
+const VAULT_DETAIL_KEYS = [
+  "unlockErrorDetail",
+  "unavailableDetail",
+  "writeRefusedMessage",
+] as const;
 
 /**
  * T5.2 — the legacy-migration choice dialog. Every string it renders goes
@@ -775,6 +783,16 @@ describe("i18n locales (privacy.vault.*) — T3.3 locked shell", () => {
       expect(typeof value, `privacy.vault.${key}`).toBe("string");
       expect(value as string, `privacy.vault.${key}`).toContain("{{reason}}");
     }
+    // The write-refusal message names the affected data area as well as the
+    // typed reason; dropping the placeholder would render literal "{{area}}".
+    const refusedMessage = resolve(dict, [
+      "privacy",
+      "vault",
+      "writeRefusedMessage",
+    ]) as string;
+    expect(refusedMessage, "privacy.vault.writeRefusedMessage").toContain(
+      "{{area}}",
+    );
   });
 
   it("has no orphan privacy.vault keys in either locale", () => {

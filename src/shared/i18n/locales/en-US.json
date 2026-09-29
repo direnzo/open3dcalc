@@ -1211,7 +1211,7 @@
     "vault": {
       "ariaLabel": "Personal data locked",
       "lockedTitle": "Your personal data is locked",
-      "lockedMessage": "Customers, quotes and history are encrypted and will not load without your passphrase. Nothing was deleted. Unlock for this session to see them again.",
+      "lockedMessage": "Customers, quotes and history are encrypted and will not load without your passphrase. Nothing was deleted. While the profile is locked, NEW entries will not be saved. Unlock for this session to see them again.",
       "createTitle": "Set up your profile passphrase",
       "createMessage": "This profile has no passphrase yet. Choose one to encrypt customers, quotes and history on this device. It is never stored and never leaves this session.",
       "passphraseLabel": "Profile passphrase",
@@ -1229,8 +1229,11 @@
       "unlockError": "Could not unlock.",
       "unlockErrorDetail": "Reason: {{reason}}",
       "unavailableTitle": "Personal data unavailable in this environment",
-      "unavailableMessage": "This environment cannot protect personal data (no encryption or secure storage), so customers, quotes and history are neither shown nor written. Nothing was deleted.",
-      "unavailableDetail": "Reason: {{reason}}"
+      "unavailableMessage": "This environment cannot protect personal data (no encryption or secure storage), so customers, quotes and history are neither shown nor written. Nothing was deleted. NEW entries will not be saved here.",
+      "unavailableDetail": "Reason: {{reason}}",
+      "writeRefusedTitle": "New entries were not saved",
+      "writeRefusedMessage": "Could not save to {{area}}: the profile is locked or data protection is unavailable ({{reason}}). The entry was NOT saved and will be lost when you reload. Unlock the profile to save.",
+      "writeRefusedAreaUnknown": "personal data"
     },
     "residue": {
       "title": "Legacy plaintext data",

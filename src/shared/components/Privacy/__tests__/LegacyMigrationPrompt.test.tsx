@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 
 import type { LegacyPiiPlaintextReport } from "@/shared/lib/legacyPiiPlaintext";
+import {
+  residueSignature,
+  useLegacyKeepReadOnlyStore,
+} from "@/shared/stores/legacyKeepReadOnlyStore";
 
 /**
  * T5.2 — the mount point that opens the choice dialog when there IS plaintext
@@ -34,15 +38,20 @@ vi.mock("../LegacyMigrationDialog", () => ({
     open,
     onRequestClose,
     onOpenExport,
+    onKeepReadOnly,
   }: {
     open: boolean;
     onRequestClose: () => void;
     onOpenExport: () => void;
+    onKeepReadOnly?: () => void;
   }) =>
     open ? (
       <div data-testid="migration-dialog">
         <button type="button" onClick={onRequestClose}>
           close
+        </button>
+        <button type="button" onClick={onKeepReadOnly}>
+          keep
         </button>
         <button type="button" onClick={onOpenExport}>
           export
@@ -85,6 +94,8 @@ function reportOf(present: boolean): LegacyPiiPlaintextReport {
 beforeEach(() => {
   mockDetect.mockReset();
   consentState.migrationConsentGiven = false;
+  window.localStorage.clear();
+  useLegacyKeepReadOnlyStore.setState({ signature: null });
 });
 
 describe("LegacyMigrationPrompt", () => {
@@ -133,5 +144,58 @@ describe("LegacyMigrationPrompt", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "sync-close" }));
     expect(screen.queryByTestId("sync-modal")).toBeNull();
+  });
+
+  // ── L-2: the keep-read-only decision is remembered ──────────────────────
+
+  it("records the keep-read-only choice value-free when the user keeps it", () => {
+    mockDetect.mockReturnValue(reportOf(true));
+    render(<LegacyMigrationPrompt />);
+
+    fireEvent.click(screen.getByRole("button", { name: "keep" }));
+
+    expect(useLegacyKeepReadOnlyStore.getState().signature).toBe(
+      residueSignature(reportOf(true)),
+    );
+    const raw = window.localStorage.getItem(
+      "open3dcalc_legacy_keep_readonly_v1",
+    );
+    expect(raw).not.toBeNull();
+    // The persistence carries the residue signature only — never a record.
+    expect(raw).toContain(residueSignature(reportOf(true)));
+  });
+
+  it("does not prompt on a later session while the residue is unchanged", () => {
+    useLegacyKeepReadOnlyStore.setState({
+      signature: residueSignature(reportOf(true)),
+    });
+    mockDetect.mockReturnValue(reportOf(true));
+
+    render(<LegacyMigrationPrompt />);
+    expect(screen.queryByTestId("migration-dialog")).toBeNull();
+  });
+
+  it("prompts again when the residue changed after the keep-read-only choice", () => {
+    useLegacyKeepReadOnlyStore.setState({
+      signature: residueSignature(reportOf(false)),
+    });
+    mockDetect.mockReturnValue(reportOf(true));
+
+    render(<LegacyMigrationPrompt />);
+    expect(screen.getByTestId("migration-dialog")).toBeInTheDocument();
+  });
+
+  it("re-prompts when the Privacy screen reopens the choice", () => {
+    useLegacyKeepReadOnlyStore.setState({
+      signature: residueSignature(reportOf(true)),
+    });
+    mockDetect.mockReturnValue(reportOf(true));
+
+    render(<LegacyMigrationPrompt />);
+    expect(screen.queryByTestId("migration-dialog")).toBeNull();
+
+    act(() => useLegacyKeepReadOnlyStore.getState().reopen());
+
+    expect(screen.getByTestId("migration-dialog")).toBeInTheDocument();
   });
 });

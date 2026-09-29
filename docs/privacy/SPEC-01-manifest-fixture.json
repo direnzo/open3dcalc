@@ -79,6 +79,25 @@
       "version": "1.0"
     },
     {
+      "key": "open3dcalc_legacy_keep_readonly_v1",
+      "surface": "localStorage",
+      "platforms": ["electron", "web", "pwa"],
+      "class": "onboarding_flag",
+      "pii": false,
+      "persistence": "plaintext_allowed",
+      "sync": "never",
+      "export": "never",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Value-free record of the user's 'keep read-only' answer to the legacy plaintext migration prompt (Beta5 L-2). It stores only the residue SIGNATURE - each legacy key's name and record COUNT - never a record and never a value, so the prompt can stop re-asking while the residue is unchanged while still re-asking honestly the moment it changes. Non-PII operational state: it does not change what is collected or its legal basis, so it carries no policy_version bump and no re-consent. The user can reopen the choice from the Privacy screen, which removes this key.",
+      "legal_basis": "not_personal_data",
+      "owner": "hermes",
+      "version": "1.0"
+    },
+    {
       "key": "open3dcalc_quickstart_dismissed",
       "surface": "localStorage",
       "platforms": ["electron", "web", "pwa"],

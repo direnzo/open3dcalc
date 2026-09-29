@@ -668,6 +668,9 @@ const MIGRATION_KEYS = [
   "resultNothingToMigrate",
   "resultIncomplete",
   "close",
+  "keepReadOnlyTitle",
+  "keepReadOnlyActive",
+  "keepReadOnlyReopen",
 ] as const;
 
 describe("i18n locales (privacy.migration.*) — T5.2 choice dialog", () => {
@@ -725,6 +728,8 @@ const RESIDUE_KEYS = [
   "historyComplete",
   "historyResumable",
   "markerNote",
+  "driftHeading",
+  "driftWarning",
   "valueFreeNote",
 ] as const;
 
@@ -733,6 +738,7 @@ const RESIDUE_PLACEHOLDERS: Record<string, readonly string[]> = {
   residueKey: ["{{key}}", "{{count}}"],
   vaultUnavailableDetail: ["{{reason}}"],
   markerNote: ["{{key}}"],
+  driftWarning: ["{{sources}}"],
 };
 
 describe("i18n locales (privacy.residue.*) — T5.3 residue disclosure", () => {

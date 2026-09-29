@@ -8,6 +8,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { LegacyResidueDisclosure } from "@/shared/components/Privacy/LegacyResidueDisclosure";
+import { useLegacyKeepReadOnlyStore } from "@/shared/stores/legacyKeepReadOnlyStore";
 
 /**
  * Privacy screen (D1.1 S4) — ADR-002 §2.2.4.
@@ -46,6 +47,38 @@ const STATUS_LABEL_KEYS: Record<string, string> = {
   non_pii: "privacy.quarantine.statusNonPii",
   unknown_key: "privacy.quarantine.statusUnknown",
 };
+
+/**
+ * L-2 — the way back to the legacy-migration choice.
+ *
+ * When the user chose "keep read-only" the decision is persisted (value-free)
+ * and the prompt stops returning. This control states that plainly and removes
+ * the decision so the choice is offered again. It renders nothing when no
+ * decision is stored.
+ */
+function KeepReadOnlyControl() {
+  const { t } = useTranslation();
+  const keepSignature = useLegacyKeepReadOnlyStore((state) => state.signature);
+  const reopen = useLegacyKeepReadOnlyStore((state) => state.reopen);
+  if (keepSignature === null) return null;
+  return (
+    <div className="surface rounded-xl p-4 space-y-2">
+      <h3 className="text-sm font-bold text-[var(--color-text-primary)]">
+        {t("privacy.migration.keepReadOnlyTitle")}
+      </h3>
+      <p className="text-xs text-[var(--color-text-secondary)]">
+        {t("privacy.migration.keepReadOnlyActive")}
+      </p>
+      <button
+        type="button"
+        onClick={() => reopen()}
+        className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] border border-[var(--color-border)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+      >
+        {t("privacy.migration.keepReadOnlyReopen")}
+      </button>
+    </div>
+  );
+}
 
 export function PrivacyScreen() {
   const { t } = useTranslation();
@@ -253,6 +286,7 @@ export function PrivacyScreen() {
         </div>
         {/* T5.3 — the browser residue exists on web too: disclose it here. */}
         <LegacyResidueDisclosure />
+        <KeepReadOnlyControl />
       </div>
     );
   }
@@ -398,6 +432,7 @@ export function PrivacyScreen() {
 
       {/* ── T5.3 legacy residue + vault/marker disclosure ────────────── */}
       <LegacyResidueDisclosure />
+      <KeepReadOnlyControl />
 
       {/* ── SPEC-04 consent receipt ─────────────────────────────────── */}
       {/* Every string below reads `privacy.consent_receipt.*`, NOT

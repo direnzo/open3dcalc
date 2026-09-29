@@ -1162,7 +1162,10 @@
       "resultVaultLocked": "Migration refused: the vault is locked. Unlock it with your passphrase and try again. Nothing was written.",
       "resultNothingToMigrate": "Nothing to migrate: there are no recognisable legacy records.",
       "resultIncomplete": "The migration was neither completed nor verified. Nothing was deleted; please try again.",
-      "close": "Close"
+      "close": "Close",
+      "keepReadOnlyTitle": "You chose to keep the legacy data read-only",
+      "keepReadOnlyActive": "The question will not be asked again while this data is unchanged. Nothing was migrated or deleted; the plaintext residue stays disclosed above.",
+      "keepReadOnlyReopen": "Reopen the choice"
     },
     "quarantine": {
       "title": "Legacy data quarantine",
@@ -1257,6 +1260,8 @@
       "historyComplete": "Complete",
       "historyResumable": "Resumable — an interrupted migration can be resumed",
       "markerNote": "Marker key: {{key}}",
+      "driftHeading": "Legacy source changed",
+      "driftWarning": "The legacy source changed after the migration: {{sources}} no longer matches what was migrated. Nothing was reconciled automatically.",
       "valueFreeNote": "This panel is informational and value-free: it shows only key names, counts and states."
     }
   },

@@ -41,6 +41,12 @@ export interface LegacyMigrationDialogProps {
   onRequestClose: () => void;
   /** Opens the existing export flow (DataSyncModal) when the vault is ready. */
   onOpenExport: () => void;
+  /**
+   * Records the user's explicit "keep read-only" choice. The choice is
+   * value-free and persisted by the caller so the prompt is not re-shown while
+   * the residue is unchanged (L-2).
+   */
+  onKeepReadOnly?: () => void;
   /** Injectable for tests; defaults to a live detection of the residue. */
   report?: LegacyPiiPlaintextReport;
 }
@@ -74,6 +80,7 @@ export function LegacyMigrationDialog({
   open,
   onRequestClose,
   onOpenExport,
+  onKeepReadOnly,
   report,
 }: LegacyMigrationDialogProps) {
   const { t } = useTranslation();
@@ -143,6 +150,9 @@ export function LegacyMigrationDialog({
   };
 
   const handleKeepReadOnly = () => {
+    // Persist the value-free decision before showing the confirmation, so the
+    // prompt can stop re-asking while the residue is unchanged (L-2).
+    onKeepReadOnly?.();
     setOutcome({ kind: "kept_read_only" });
   };
 

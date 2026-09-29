@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import enUS from "@/shared/i18n/locales/en-US.json";
 import ptBR from "@/shared/i18n/locales/pt-BR.json";
 import i18n from "@/shared/i18n/i18n";
+import { useLegacyKeepReadOnlyStore } from "@/shared/stores/legacyKeepReadOnlyStore";
 import { PrivacyScreen } from "../PrivacyScreen";
 
 // ---------------------------------------------------------------------------
@@ -180,6 +181,49 @@ describe("PrivacyScreen (D1.1 S4)", () => {
     expect(
       screen.getByRole("region", { name: "privacy.residue.title" }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * L-2 — the way back to the legacy-migration choice. When a keep-read-only
+ * decision is stored the screen must disclose it and offer to reopen the
+ * choice, because the prompt no longer asks while the residue is unchanged.
+ */
+describe("PrivacyScreen (L-2) — reopen the keep-read-only choice", () => {
+  afterEach(() => {
+    useLegacyKeepReadOnlyStore.setState({ signature: null });
+  });
+
+  it("offers a way back to the choice when a decision is stored", () => {
+    useLegacyKeepReadOnlyStore.setState({
+      signature: "open3dcalc_customers_v1=1",
+    });
+    render(<PrivacyScreen />);
+
+    expect(
+      screen.getByText("privacy.migration.keepReadOnlyTitle"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "privacy.migration.keepReadOnlyReopen",
+      }),
+    );
+
+    expect(useLegacyKeepReadOnlyStore.getState().signature).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "privacy.migration.keepReadOnlyReopen",
+      }),
+    ).toBeNull();
+  });
+
+  it("renders no control when no decision is stored", () => {
+    render(<PrivacyScreen />);
+    expect(
+      screen.queryByRole("button", {
+        name: "privacy.migration.keepReadOnlyReopen",
+      }),
+    ).toBeNull();
   });
 });
 

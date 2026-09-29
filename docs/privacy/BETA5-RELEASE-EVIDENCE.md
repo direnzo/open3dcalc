@@ -110,9 +110,10 @@ Trabalho de remediação de privacidade do beta, fechado como PR #236:
   encadeadas são operações criptográficas independentes e podem resolver fora de ordem; um valor
   anterior (por exemplo o estado vazio inicial de uma action) podia ser enfileirado e commitado
   **depois** do mais novo e vencer — last-writer-wins invertido.
-- **Correção:** o selo passou a ocorrer **dentro da fila por chave** (`bdf5d99`), de modo que a fila
-  fixa a **ordem** além da contagem; `rehydratePiiStores()`/`unlockPiiStoresAndRehydrate()` passaram
-  a aguardar `whenPiiWritesSettled()` antes de ler.
+- **Correção:** o selo passou a ocorrer **dentro da fila por chave** (conteúdo squash-mergeado em
+  `main` como `1b7b885`), de modo que a fila fixa a **ordem** além da contagem;
+  `rehydratePiiStores()`/`unlockPiiStoresAndRehydrate()` passaram a aguardar `whenPiiWritesSettled()`
+  antes de ler.
 - **Verificação de falsificabilidade:** a Themis **reverteu o fix em clone isolado** e o teste de
   regressão determinístico de last-writer-wins **falhou (FAIL)** — o teste morde de fato. Com o fix
   presente, passa.
@@ -121,11 +122,11 @@ Trabalho de remediação de privacidade do beta, fechado como PR #236:
 
 ## 4. Revisões
 
-| Revisão                       | Commit revisado | Veredito             | Achados                                    | Situação                                                                         |
-| ----------------------------- | --------------- | -------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
-| Themis W3                     | `a0a698a`       | **CHANGES_REQUIRED** | HIGH-1, HIGH-2, HIGH-3                     | ✅ resolvidos                                                                    |
-| Themis full-branch            | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                                        | ✅ fix inicial em `6b1d186`; fechamento completo em `a7d8aaf`                    |
-| Themis gate final (exact-SHA) | `a7d8aaf`       | **APPROVED**         | H-4 e seu resíduo no caminho do calculador | ✅ fechado (`CalculatorHistoryWriteGate.test.tsx`, falsificabilidade verificada) |
+| Revisão                       | Commit revisado | Veredito             | Achados                                    | Situação                                                                                              |
+| ----------------------------- | --------------- | -------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Themis W3                     | `a0a698a`       | **CHANGES_REQUIRED** | HIGH-1, HIGH-2, HIGH-3                     | ✅ resolvidos                                                                                         |
+| Themis full-branch            | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                                        | ✅ fix inicial em `6b1d186`; fechamento completo em `a7d8aaf` (conteúdo squash-mergeado em `1b7b885`) |
+| Themis gate final (exact-SHA) | `a7d8aaf`       | **APPROVED**         | H-4 e seu resíduo no caminho do calculador | ✅ fechado (`CalculatorHistoryWriteGate.test.tsx`, falsificabilidade verificada)                      |
 
 **Aprovado:** a Themis aprovou o **exact-SHA final** `a7d8aaf` (gate final). Esse SHA é o registro
 histórico da branch de remediação: o PR #236 foi **squash-mergeado** em `main` como `1b7b885`, e o
@@ -158,16 +159,17 @@ conteúdo aprovado está contido nesse merge. Todos os itens humanos do gate (§
 
 ## 6. Resíduos / limitações conhecidas e follow-ups rastreáveis
 
-| Item                                   | Descrição                                                                                                                                                                      | Situação nesta branch (`fix/beta5-privacy-w4-residuals`)                          |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| **W4.4 / T4.4**                        | Política do marker `open3dcalc_migration_done_v2` (quando/quando não permanece)                                                                                                | ✅ Implementado — o marker novo é value-free (`open3dcalc_migration_progress_v2`) |
-| **W4.4 / T4.4 (divergência manifest)** | O manifest declara `persistence: "encrypted_at_rest"` para o marker `open3dcalc_migration_done_v2`, que hoje é **plaintext** — divergência a explicitar no texto de disclosure | ✅ Divulgada — purpose do manifest + painel de resíduo no app (§5)                |
-| **T4.5**                               | Cleanup condicional do resíduo apenas quando `COUNT > 0`                                                                                                                       | Follow-up (não implementado nesta branch)                                         |
-| **T4.6**                               | Drift indicator (sinalizar divergência entre vault e resíduo legado)                                                                                                           | ✅ Implementado — `open3dcalc_migration_fingerprint_v1` (value-free)              |
-| **W6**                                 | Harness real de browser + matriz de testes packaged (não construído nesta iteração; **não medido** além do exposto)                                                            | Resíduo conhecido                                                                 |
-| **Re-home desktop / IPC**              | Re-home de PII no desktop via IPC — indisponível nesta versão (release web-only)                                                                                               | Follow-up                                                                         |
-| **L-1**                                | `PII_SYNC_KEYS` é **export morto** (`src/shared/lib/dataSync.ts`)                                                                                                              | ✅ Implementado — export removido                                                 |
-| **L-2**                                | Re-prompt após `keep` (manter read-only) não ocorre nesta versão                                                                                                               | ✅ Implementado — `open3dcalc_legacy_keep_readonly_v1` + reabertura no app        |
+| Item                                   | Descrição                                                                                                                                                                                                                                                              | Situação nesta branch (`fix/beta5-privacy-w4-residuals`)                          |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **W4.4 / T4.4**                        | Política do marker `open3dcalc_migration_done_v2` (quando/quando não permanece)                                                                                                                                                                                        | ✅ Implementado — o marker novo é value-free (`open3dcalc_migration_progress_v2`) |
+| **W4.4 / T4.4 (divergência manifest)** | O manifest declara `persistence: "encrypted_at_rest"` para o marker `open3dcalc_migration_done_v2`, que hoje é **plaintext** — divergência a explicitar no texto de disclosure                                                                                         | ✅ Divulgada — purpose do manifest + painel de resíduo no app (§5)                |
+| **T4.5**                               | Cleanup condicional do resíduo apenas quando `COUNT > 0`                                                                                                                                                                                                               | Follow-up (não implementado nesta branch)                                         |
+| **T4.6**                               | Drift indicator (sinalizar divergência entre vault e resíduo legado)                                                                                                                                                                                                   | ✅ Implementado — `open3dcalc_migration_fingerprint_v1` (value-free)              |
+| **W6**                                 | Harness real de browser + matriz de testes packaged (não construído nesta iteração; **não medido** além do exposto)                                                                                                                                                    | Resíduo conhecido                                                                 |
+| **W6 — CI do harness de browser**      | `npm run test:browser` roda no job `test-browser` do `ci-cd.yml`, mas **não é required check** e **não está no caminho do `beta-deploy.yml`** (o deploy beta só roda `build:web`). Um job vermelho não bloqueia merge nem publicação — hoje é **evidência, não gate**. | Follow-up rastreável                                                              |
+| **Re-home desktop / IPC**              | Re-home de PII no desktop via IPC — indisponível nesta versão (release web-only)                                                                                                                                                                                       | Follow-up                                                                         |
+| **L-1**                                | `PII_SYNC_KEYS` é **export morto** (`src/shared/lib/dataSync.ts`)                                                                                                                                                                                                      | ✅ Implementado — export removido                                                 |
+| **L-2**                                | Re-prompt após `keep` (manter read-only) não ocorre nesta versão                                                                                                                                                                                                       | ✅ Implementado — `open3dcalc_legacy_keep_readonly_v1` + reabertura no app        |
 
 > A coluna **Situação** substitui o antigo rótulo `Tipo`: os itens que esta branch resolve estão
 > marcados como implementados/divulgados; `T4.5`, W6 e o re-home desktop/IPC seguem como follow-ups

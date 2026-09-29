@@ -424,9 +424,15 @@ npm run test:run
 
 # Com cobertura
 npm run test:run -- --coverage
+
+# Harness de browser (PII vault em Chromium real) — requer o Chromium do
+# Playwright: `npx playwright install chromium` (no CI: `--with-deps`)
+npm run test:browser
 ```
 
 We use **Vitest** + **Testing Library** for unit and component tests. Minimum coverage for calculation logic: **80%**.
+
+`npm run test:browser` roda os specs `*.browser.test.ts` e `*.browser.test.tsx` num **Chromium real** (via Playwright) — o runtime que a web/PWA realmente usa, com `indexedDB` e Web Crypto verdadeiros. É **pré-requisito** instalar o browser uma vez: `npx playwright install chromium` (no CI o job instala com `npx playwright install --with-deps chromium`, que também puxa as libs de sistema do Chromium headless). Esse glob é **excluído** da suíte jsdom (`npm run test:run`), então as duas suítes não se sobrepõem.
 
 ---
 
@@ -477,25 +483,26 @@ npm run db:migrate
 
 ## 📜 Scripts Reference
 
-| Script                       | Description                                            |
-| ---------------------------- | ------------------------------------------------------ |
-| `npm run dev:web`            | Start web dev server (Vite, hot-reload)                |
-| `npm run dev:desktop`        | Start Electron + Vite dev (hot-reload)                 |
-| `npm run dev:electron`       | Compile + launch Electron main process                 |
-| `npm run build:web`          | Build web app → `dist-web/`                            |
-| `npm run build:desktop`      | Build desktop renderer → `dist/`                       |
-| `npm run build:electron`     | Compile Electron main process (TypeScript)             |
-| `npm run build:all`          | Build both web + desktop                               |
-| `npm run build:shared`       | TypeScript check shared code (`--noEmit`)              |
-| `npm run preview:web`        | Preview web production build locally                   |
-| `npm test`                   | Run tests in watch mode                                |
-| `npm run test:run`           | Run tests once (CI mode)                               |
-| `npm run lint`               | ESLint check across entire project                     |
-| `npm run typecheck`          | TypeScript check (`tsc --noEmit -p tsconfig.app.json`) |
-| `npm run typecheck:electron` | TypeScript check for Electron main process             |
-| `npm run db:generate`        | Generate Drizzle ORM migrations                        |
-| `npm run db:migrate`         | Run pending SQLite migrations                          |
-| `npm run postinstall`        | Rebuild native modules (electron-rebuild)              |
+| Script                       | Description                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `npm run dev:web`            | Start web dev server (Vite, hot-reload)                                      |
+| `npm run dev:desktop`        | Start Electron + Vite dev (hot-reload)                                       |
+| `npm run dev:electron`       | Compile + launch Electron main process                                       |
+| `npm run build:web`          | Build web app → `dist-web/`                                                  |
+| `npm run build:desktop`      | Build desktop renderer → `dist/`                                             |
+| `npm run build:electron`     | Compile Electron main process (TypeScript)                                   |
+| `npm run build:all`          | Build both web + desktop                                                     |
+| `npm run build:shared`       | TypeScript check shared code (`--noEmit`)                                    |
+| `npm run preview:web`        | Preview web production build locally                                         |
+| `npm test`                   | Run tests in watch mode                                                      |
+| `npm run test:run`           | Run tests once (CI mode)                                                     |
+| `npm run test:browser`       | Run `*.browser.test.ts` / `*.browser.test.tsx` in real Chromium (Playwright) |
+| `npm run lint`               | ESLint check across entire project                                           |
+| `npm run typecheck`          | TypeScript check (`tsc --noEmit -p tsconfig.app.json`)                       |
+| `npm run typecheck:electron` | TypeScript check for Electron main process                                   |
+| `npm run db:generate`        | Generate Drizzle ORM migrations                                              |
+| `npm run db:migrate`         | Run pending SQLite migrations                                                |
+| `npm run postinstall`        | Rebuild native modules (electron-rebuild)                                    |
 
 ---
 

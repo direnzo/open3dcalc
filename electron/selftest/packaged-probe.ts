@@ -41,8 +41,9 @@
  *
  * `app.whenReady()` first, because `safeStorage.getSelectedStorageBackend()` is
  * meaningless before the app is ready (Electron answers `unknown`). Any throw is
- * reported as `{error}` and exits non-zero: a probe that cannot run must not be
- * mistaken for a machine that passed.
+ * reported as `{error: PACKAGED_PROBE_ERROR_CODE}` — a fixed code, never the raw
+ * message — and exits non-zero: a probe that cannot run must not be mistaken for
+ * a machine that passed.
  */
 
 import { app } from "electron";
@@ -60,6 +61,14 @@ import type { CapabilityDecision } from "../../src/shared/lib/crypto/capability.
 export const PACKAGED_PROBE_PREFIX = "__PACKAGED_PROBE__";
 
 export const PACKAGED_PROBE_SCHEMA = "open3dcalc.packaged-keyring-probe/v1";
+
+/**
+ * Fixed, non-PII code for the fail-closed catch-all. The raw `error.message` is
+ * deliberately NOT emitted: a throw site is free to build a message from a
+ * value (a path, a backend string, an OS error), and this report is value-free
+ * by contract. "The probe could not run" is the whole signal a caller needs.
+ */
+export const PACKAGED_PROBE_ERROR_CODE = "probe_failed";
 
 /** Distro identity, reduced to the three fields that are not free-form prose. */
 export interface DistroIdentity {
@@ -185,13 +194,13 @@ app.whenReady().then(() => {
   try {
     emit(buildPackagedProbeReport());
     app.exit(0);
-  } catch (error) {
-    // Message only: a thrown object can carry a value, a message cannot carry
-    // anything the throw site did not already put into it, and every throw site
-    // in the gate is a fixed code.
+  } catch {
+    // A fixed code, never `error.message`: a message is arbitrary text a throw
+    // site chose, and this report is value-free by contract. The report must
+    // not be able to carry a path or a value through this field.
     emit({
       schema: PACKAGED_PROBE_SCHEMA,
-      error: error instanceof Error ? error.message : "unknown_error",
+      error: PACKAGED_PROBE_ERROR_CODE,
     });
     app.exit(1);
   }

@@ -51,6 +51,18 @@ const EXPECTED_ALLOWLIST = [
   "kwallet6",
 ];
 
+/**
+ * Home-path prefixes the value-free report must never contain, one per OS:
+ * Linux `/home/` and `/root/`, macOS `/Users/`, Windows `C:\Users\` (which
+ * `JSON.stringify` writes as the escaped `C:\\Users\\`).
+ */
+const FORBIDDEN_PATH_MARKERS = [
+  "/home/",
+  "/root/",
+  "/Users/",
+  "C:\\\\Users\\\\",
+];
+
 /** Every refusal code `probeOsKeyring` can return. */
 const KNOWN_REFUSALS = new Set([
   "encryption_unavailable",
@@ -219,8 +231,18 @@ function runInContainer(binary, image) {
 }
 
 /**
- * The invariants. These are the falsifiable part of the harness: each one fails
- * when the gate stops doing what ADR-001 §3.4 claims it does.
+ * The invariants. Each one fails when the gate stops doing what ADR-001 §3.4
+ * claims it does.
+ *
+ * Honest scope of what CI exercises: every matrix row runs without a D-Bus
+ * session bus or a keyring, so the observed verdict is always `denied` /
+ * `encryption_unavailable`. CI therefore falsifies the REFUSAL path plus the
+ * packaging/coherence invariants below (allowlist identity, capability ↔ gate
+ * agreement, value-free report). It does NOT exercise the ACCEPTANCE path — the
+ * branch where `basic_text` is refused while a real keyring is accepted. That
+ * branch is pinned by the unit test `electron/__tests__/osKeyring.test.ts`,
+ * which mocks `safeStorage`; a green harness run is not evidence that the gate
+ * accepts a real keyring.
  */
 function assertReport(report) {
   const problems = [];
@@ -239,18 +261,24 @@ function assertReport(report) {
   check(report.packaged?.isPackaged === true, "app.isPackaged is not true");
   check(report.packaged?.asar === true, "app path is not an app.asar");
 
-  // 2. The allowlist the gate applied is the documented one.
+  // 2. The allowlist the gate applied is EXACTLY the four documented names —
+  //    not a superset. `osKeyring.ts` treats a grown allowlist as a new threat
+  //    model ("an allowlist that grows by accident is not an allowlist"), so a
+  //    fifth name must fail here instead of slipping past an `includes` check.
+  const allowlist = Array.isArray(report.allowlist) ? report.allowlist : [];
+  const expectedAllowlist = [...EXPECTED_ALLOWLIST].sort();
+  const actualAllowlist = [...allowlist].sort();
   check(
-    Array.isArray(report.allowlist) &&
-      EXPECTED_ALLOWLIST.every((name) => report.allowlist.includes(name)),
-    `allowlist does not contain ${EXPECTED_ALLOWLIST.join(", ")}`,
+    actualAllowlist.length === expectedAllowlist.length &&
+      actualAllowlist.every((name, index) => name === expectedAllowlist[index]),
+    `allowlist is not exactly the four documented backends (${EXPECTED_ALLOWLIST.join(", ")})`,
   );
 
   // 3. The gate's verdict is internally consistent, in both directions.
   const keyring = report.keyring ?? {};
   if (keyring.available === true) {
     check(
-      report.allowlist.includes(keyring.backend),
+      allowlist.includes(keyring.backend),
       `gate accepted a backend outside the allowlist: ${keyring.backend}`,
     );
     // The exact defect §3.4 exists to stop: `basic_text` is obfuscation, and a
@@ -292,10 +320,16 @@ function assertReport(report) {
   check(typeof report.roundTrip === "boolean", "round-trip result missing");
 
   // 6. Value-free hygiene. A username in a home path, a blob, or key material
-  //    in a log line is exactly what this probe must never produce.
+  //    in a log line is exactly what this probe must never produce. Home-path
+  //    prefixes are checked for every OS the report can come from.
   const serialized = JSON.stringify(report);
   check(!serialized.includes("enc1:"), "report contains a ciphertext blob");
-  check(!serialized.includes("/home/"), "report contains a filesystem path");
+  for (const marker of FORBIDDEN_PATH_MARKERS) {
+    check(
+      !serialized.includes(marker),
+      `report contains a filesystem path (${marker})`,
+    );
+  }
   check(
     !serialized.includes("open3dcalc-keyring-probe-0000"),
     "report contains the probe sentinel value",

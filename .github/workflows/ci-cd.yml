@@ -197,7 +197,7 @@ jobs:
     # see docs/privacy/BETA5-RELEASE-EVIDENCE.md §5/§6.
     #
     # fail-fast: false on purpose: a red ubuntu row must not hide whether
-    # debian/fedora loaded, because "loads on all three" is the claim.
+    # debian/rocky loaded, because "loads on all three" is the claim.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -205,7 +205,7 @@ jobs:
       matrix:
         # `host` is the explicit spelling of "no container" (handled by the
         # probe script) so the baseline runner is a matrix row like any other.
-        image: [host, "ubuntu:24.04", "debian:12", "fedora:40"]
+        image: [host, "ubuntu:24.04", "debian:12", "rockylinux:9"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

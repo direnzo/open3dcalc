@@ -5,6 +5,10 @@ import { printers } from "@/shared/lib/printers";
 import { useCatalogStore } from "@/shared/stores/catalogStore";
 import { useFilamentInventory } from "@/shared/stores/filamentInventory";
 import { useHistoryStore } from "@/shared/stores/historyStore";
+import {
+  PII_STORE_KEY,
+  beginPiiSurfaceWrite,
+} from "@/shared/lib/crypto/piiStoreHydration";
 import type { CalculatorState } from "./calculatorStore.types";
 import type {
   AMSSlot,
@@ -628,6 +632,14 @@ export const useCalculatorStore = create<CalculatorState>((set, get) => {
 
       const historyKey = JSON.stringify({ ...snapshot, id: "", timestamp: 0 });
       if (s.lastHistoryKey === historyKey) return;
+
+      // H-4: a locked or incapable vault refuses the history write at
+      // persistence but the entry would remain in MEMORY — a ghost the user
+      // sees as saved and loses on reload. Block the write BEFORE it mutates
+      // the store and record the refusal, so no ghost entry is ever created
+      // and the results surface can render why nothing was saved. A demo
+      // session is ephemeral by design and is deliberately NOT blocked.
+      if (beginPiiSurfaceWrite(PII_STORE_KEY.history) !== null) return;
 
       useHistoryStore.getState().addEntry({
         id,

@@ -6,6 +6,10 @@ import type { FdmSlicerProfile } from "../calculatorStore.types";
 import { VOLUME_DEFAULTS } from "@/shared/lib/stlParser";
 import { DEFAULT_SETTINGS } from "@/shared/lib/printTimeEstimator";
 import { buildSnapshot } from "./calculatorStore.test-utils";
+import {
+  resetPiiStoreGateForTests,
+  setDemoSuppressedForPiiGate,
+} from "@/shared/lib/crypto/piiStoreCapability";
 
 // ── Hoisted mocks (executed by vitest BEFORE imports) ──────────────
 const { mockAddEntry, mockDeductWeight } = vi.hoisted(() => ({
@@ -45,6 +49,11 @@ describe("CalculatorStore — fdmSlicerProfile slice (D-EA1)", () => {
   beforeEach(() => {
     vi.clearAllTimers();
     localStorage.clear();
+    // addToHistory is gated on the PII vault (H-4). These specs prove the
+    // slicer profile is serialized into the snapshot, not persistence, so they
+    // run as an ephemeral demo session — the one state the gate allows.
+    resetPiiStoreGateForTests();
+    setDemoSuppressedForPiiGate(true);
     useCalculatorStore.setState(
       {
         ...useCalculatorStore.getState(),

@@ -6,6 +6,8 @@ dist/
 dist-web/
 dist-ssr/
 dist-electron/
+# Packaged keyring-probe shell (W6) — `npm run test:packaged` output, never shipped
+dist-electron-probe/
 electron/dist/
 storybook-static/
 coverage/

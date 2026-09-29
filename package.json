@@ -17,6 +17,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:packaged": "node scripts/packaged-probe.mjs",
     "release:notes:validate": "node scripts/validate-release-notes.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "verify:electron": "node scripts/verify-electron-imports.mjs",

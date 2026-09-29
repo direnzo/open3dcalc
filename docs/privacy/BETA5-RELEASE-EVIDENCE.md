@@ -35,10 +35,13 @@ exact-SHA, disclosure publicada, tag/deploy executados e validação live conclu
 > (commit tagueado): a tag anotada `v2.0.0-beta.5` aponta para esse commit. Os SHAs acima são
 > imutáveis — não houve reescrita de história.
 
-> **Branch de resíduos W4** (`fix/beta5-privacy-w4-residuals`, **pós-beta.5**): fecha os follow-ups
-> W4.4/T4.4, T4.6, L-1 e L-2 e reconcilia a tabela do §6 (ver também a disclosure do §5).
-> Permanecem **abertos** como follow-ups rastreáveis: **T4.5**, **W6** (harness real de browser) e o
-> **re-home desktop/IPC**.
+> **Branches de resíduos pós-beta.5.** A branch `fix/beta5-privacy-w4-residuals` fechou os follow-ups
+> W4.4/T4.4, T4.6, L-1 e L-2 e reconciliou a tabela do §6 (ver também a disclosure do §5). Na
+> sequência, **T4.5** e o **gating de CI do harness de browser** foram fechados em
+> `chore/beta5-final-residuals`, e o **re-home desktop/IPC** foi **implementado** em
+> `feat/beta5-desktop-rehome`. O harness real de browser (W6) está **construído** e passou a ser
+> **gate do publish beta**. Permanece **aberto** apenas a **matriz packaged do W6** (probe de backend
+> Linux nos alvos empacotados).
 
 > A versão em `package.json` é a linha `2.0.0-beta.5`: o **bump é feito pelo workflow `beta.yml`**
 > no momento do corte da tag (`npm version` + commit + tag anotada). O repositório não bumpa a
@@ -152,8 +155,10 @@ conteúdo aprovado está contido nesse merge. Todos os itens humanos do gate (§
 >   versão — esta release é **web-only**. **Não publique artefato desktop.**
 > - **Vault travado não salva PII nova.** Enquanto o vault estiver **locked**, novas entradas de PII
 >   **não são salvas**; a UI avisa isso explicitamente.
-> - **Harness real de browser (W6) não construído nesta iteração.** Trata-se de um **resíduo
->   conhecido desta iteração de beta** (ver §6).
+> - **Harness real de browser (W6) construído e ativo como gate.** O harness (Vitest-browser +
+>   Playwright/Chromium real) foi **construído** (`npm run test:browser`) e passou a ser **gate do
+>   publish beta** — uma tag beta **não publica** se o harness falhar. Resta apenas a **matriz
+>   packaged do W6** (probe de backend Linux nos alvos empacotados), ainda não construída (ver §6).
 
 ---
 

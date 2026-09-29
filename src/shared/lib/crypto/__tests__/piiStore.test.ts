@@ -25,6 +25,7 @@ import {
 } from "@/shared/lib/crypto/envelope";
 import {
   createPiiStore,
+  hasPiiVaultRecord,
   heldKeyForTests,
   lockAllPiiStores,
   lockPiiStore,
@@ -274,6 +275,74 @@ describe("PII vault: round trip, and no plaintext anywhere", () => {
   it("reads a missing record as null, not as an error", async () => {
     const store = await open();
     expect(await store.read()).toBeNull();
+  });
+});
+
+/**
+ * MEDIUM-1 — a locked-safe presence read. "Is there a profile to unlock?" is
+ * metadata, not PII: it must be answerable BEFORE any key is held so the locked
+ * shell can offer "create" to a new profile and "unlock" to an existing one.
+ */
+describe("PII vault: presence without unlock", () => {
+  let idb: FakeIndexedDb;
+  const options = () => ({
+    indexedDb: idb.factory,
+    environment: PII_STORE_ENVIRONMENT,
+  });
+
+  beforeEach(() => {
+    idb = createFakeIndexedDb();
+    setPiiStoreEnvironment(PII_STORE_ENVIRONMENT);
+    setPiiPersistenceDeclined(false);
+    setDemoPersistenceSuppressed(false);
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    zeroizeSessionPassphrase();
+  });
+
+  afterEach(() => {
+    setPiiStoreEnvironment(null);
+    setDemoPersistenceSuppressed(false);
+    setPiiPersistenceDeclined(false);
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    zeroizeSessionPassphrase();
+  });
+
+  it("reports no record for a fresh profile", async () => {
+    expect(await hasPiiVaultRecord(KEY, options())).toBe(false);
+  });
+
+  it("reports an existing record while the vault is locked", async () => {
+    await unlockPiiStore(KEY, PASS, options());
+    await createPiiStore(KEY, options()).write(PAYLOAD);
+    lockAllPiiStores();
+
+    expect(await hasPiiVaultRecord(KEY, options())).toBe(true);
+  });
+
+  it("treats a declined user as having no durable profile", async () => {
+    await unlockPiiStore(KEY, PASS, options());
+    await createPiiStore(KEY, options()).write(PAYLOAD);
+    lockAllPiiStores();
+    setPiiPersistenceDeclined(true);
+
+    expect(await hasPiiVaultRecord(KEY, options())).toBe(false);
+  });
+
+  it("treats a demo session as having no durable profile", async () => {
+    await unlockPiiStore(KEY, PASS, options());
+    await createPiiStore(KEY, options()).write(PAYLOAD);
+    lockAllPiiStores();
+    setDemoPersistenceSuppressed(true);
+
+    expect(await hasPiiVaultRecord(KEY, options())).toBe(false);
+  });
+
+  it("reports no record when the environment cannot hold one", async () => {
+    setPiiStoreEnvironment(null);
+
+    expect(await hasPiiVaultRecord(KEY, options())).toBe(false);
   });
 });
 

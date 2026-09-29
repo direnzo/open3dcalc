@@ -29,12 +29,14 @@ import {
   configurePiiStoreRuntime,
   getPiiStoreAccessState,
   getPiiStoreRuntimeOptions,
+  hasExistingPiiProfile,
   installPiiStoreRuntimeEnvironment,
   rehydratePiiStoresIfUnlocked,
   resetPiiStoreHydrationForTests,
   unlockPiiStoresAndRehydrate,
 } from "@/shared/lib/crypto/piiStoreHydration";
 import {
+  createPiiStore,
   isPiiStoreUnlocked,
   lockAllPiiStores,
   resetPiiStoreRuntimeForTests,
@@ -154,5 +156,73 @@ describe("T3.3 — PII vault access state", () => {
     configurePiiStoreRuntime(options());
 
     expect(getPiiStoreRuntimeOptions().indexedDb).toBe(idb.factory);
+  });
+});
+
+/**
+ * MEDIUM-1 — the locked shell must tell a NEW profile (create a passphrase)
+ * from an EXISTING one (unlock it). Presence is metadata and must be readable
+ * while the vault is locked, or a new profile would be offered an unlock form
+ * that can never fail and an existing one a "create" form that would overwrite.
+ */
+describe("MEDIUM-1 — create-vs-unlock profile presence", () => {
+  let idb: ReturnType<typeof createFakeIndexedDb>;
+  const options = () => ({
+    indexedDb: idb.factory,
+    environment: PII_STORE_ENVIRONMENT,
+  });
+
+  beforeEach(() => {
+    idb = createFakeIndexedDb();
+    resetPiiStoreGateForTests();
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    zeroizeSessionPassphrase();
+  });
+
+  afterEach(() => {
+    resetPiiStoreGateForTests();
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    zeroizeSessionPassphrase();
+  });
+
+  it("reports no existing profile for a fresh vault", async () => {
+    configurePiiStoreRuntime(options());
+    installPiiStoreRuntimeEnvironment();
+
+    expect(await hasExistingPiiProfile()).toBe(false);
+  });
+
+  it("reports an existing profile from a sealed record, while locked", async () => {
+    configurePiiStoreRuntime(options());
+    await unlockPiiStoresAndRehydrate(PASS, options());
+    await createPiiStore(PII_STORE_KEYS[0], options()).write(
+      JSON.stringify({ state: { customers: [] }, version: 1 }),
+    );
+
+    // A fresh renderer: no held key, no hydration — only the record remains.
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    zeroizeSessionPassphrase();
+    configurePiiStoreRuntime(options());
+
+    expect(getPiiStoreAccessState()).toEqual({
+      status: "locked",
+      reason: "profile_locked",
+    });
+    expect(await hasExistingPiiProfile()).toBe(true);
+  });
+
+  it("reports no profile when the environment can never hold one", async () => {
+    configurePiiStoreRuntime({
+      indexedDb: idb.factory,
+      environment: { ...PII_STORE_ENVIRONMENT, webCryptoAvailable: false },
+    });
+
+    expect(await hasExistingPiiProfile()).toBe(false);
   });
 });

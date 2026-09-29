@@ -49,6 +49,7 @@
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import {
   PiiStoreDeniedError,
+  hasPiiVaultRecord,
   installPiiStoreEnvironment,
   isPiiStoreUnlocked,
   lockPiiStore,
@@ -426,6 +427,24 @@ export async function unlockPiiStoresAndRehydrate(
     await unlockPiiStore(key, passphrase, options);
   }
   return rehydratePiiStores();
+}
+
+/**
+ * True when ANY of the three vault keys already holds a record.
+ *
+ * The locked shell's create-vs-unlock decision. A record means an EXISTING
+ * profile must be unlocked (a wrong passphrase is possible, the data is
+ * recoverable); no record means a NEW profile is being created (confirmation
+ * and an irrecoverability warning are owed). Reads presence only: the sealed
+ * value is never opened, so this is safe before a key is held. It uses the
+ * same runtime options the gate was configured with, so a platform adapter or
+ * a test's injected vault is honored.
+ */
+export async function hasExistingPiiProfile(): Promise<boolean> {
+  for (const key of PII_STORE_KEYS) {
+    if (await hasPiiVaultRecord(key, runtimeOptions)) return true;
+  }
+  return false;
 }
 
 /**

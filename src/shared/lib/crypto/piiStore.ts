@@ -575,6 +575,35 @@ export function resetPiiStoreRuntimeForTests(): void {
 }
 
 /**
+ * Whether a record exists for `key`, WITHOUT requiring an unlocked store.
+ *
+ * Presence is metadata: this answers "is there a profile to unlock?" and never
+ * decrypts or returns a value, so it is safe to ask while the vault is locked.
+ * The capability gate is still consulted — a demo session, a declined user or
+ * an incapable context has no durable profile — but the `locked` axis is
+ * deliberately NOT, because telling a NEW profile (create a passphrase) apart
+ * from an EXISTING one (unlock it) is exactly what happens before a key exists.
+ *
+ * A read failure is reported as "no record": the caller must not be pushed
+ * into an unlock form it cannot satisfy, and a later unlock still fails closed
+ * against the real record.
+ */
+export async function hasPiiVaultRecord(
+  key: string,
+  options: PiiStoreOptions = {},
+): Promise<boolean> {
+  installPiiStoreEnvironment(options);
+  if (piiStoreRefusalReason(false) !== null) return false;
+  const factory = factoryFrom(options);
+  if (factory === null) return false;
+  try {
+    return (await portFor(factory).get(key)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Derive and hold the session key for one store, verifying the passphrase
  * against the existing record before it is accepted.
  *

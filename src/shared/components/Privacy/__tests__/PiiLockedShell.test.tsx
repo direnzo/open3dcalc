@@ -6,6 +6,12 @@
  * FAILED — never a blank window, and never an empty customer list mistaken for
  * lost data. These specs drive the REAL gate (real Web Crypto, fake IndexedDB)
  * so the assertion is about the wiring, not about a mock of it.
+ *
+ * MEDIUM-1 — "create" is not "unlock". A profile with NO vault record is being
+ * CREATED: the passphrase is chosen, must be confirmed, and cannot be reset. A
+ * profile WITH a record is being UNLOCKED from a single field, and a wrong
+ * passphrase is possible but the data is still recoverable. The two modes are
+ * driven from `hasExistingPiiProfile()` (real presence read, fake IndexedDB).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,10 +51,20 @@ const PASS = "senha-sintetica-acesso-4242";
 const WRONG_PASS = "senha-sintetica-errada-1717";
 
 const LOCKED_TITLE = "privacy.vault.lockedTitle";
+const CREATE_TITLE = "privacy.vault.createTitle";
 const UNAVAILABLE_TITLE = "privacy.vault.unavailableTitle";
+const CONFIRM_LABEL = "privacy.vault.confirmPassphraseLabel";
+const CREATE_BUTTON = "privacy.vault.create";
+const UNLOCK_BUTTON = "privacy.vault.unlock";
+const MISMATCH_ERROR = "privacy.vault.mismatchError";
+const IRRECOVERABLE_NOTICE = "privacy.vault.irrecoverableNotice";
 
 function passphraseInput(): HTMLInputElement {
   return screen.getByLabelText("privacy.vault.passphraseLabel");
+}
+
+function confirmInput(): HTMLInputElement {
+  return screen.getByLabelText(CONFIRM_LABEL);
 }
 
 describe("T3.3 — PiiLockedShell", () => {
@@ -63,6 +79,21 @@ describe("T3.3 — PiiLockedShell", () => {
   function renderShell(): HTMLElement {
     container = render(<PiiLockedShell />).container;
     return container;
+  }
+
+  /**
+   * Leave a sealed record behind while the vault is locked, so the shell sees
+   * an EXISTING profile and must offer "unlock" rather than "create".
+   */
+  async function seedExistingProfile(): Promise<void> {
+    await unlockPiiStoresAndRehydrate(PASS, options());
+    await createPiiStore(CUSTOMERS, options()).write(
+      '{"state":{"customers":[]},"version":1}',
+    );
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    configurePiiStoreRuntime(options());
   }
 
   beforeEach(() => {
@@ -85,23 +116,42 @@ describe("T3.3 — PiiLockedShell", () => {
     zeroizeSessionPassphrase();
   });
 
-  it("renders a labelled region and a form for a locked, capable vault", () => {
+  it("renders a labelled create form for a fresh, locked, capable vault", async () => {
     renderShell();
 
     expect(
       screen.getByRole("region", { name: "privacy.vault.ariaLabel" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(LOCKED_TITLE)).toBeInTheDocument();
+
+    await screen.findByLabelText(CONFIRM_LABEL);
+    expect(screen.getByText(CREATE_TITLE)).toBeInTheDocument();
     expect(passphraseInput()).toHaveAttribute("type", "password");
+    expect(confirmInput()).toHaveAttribute("type", "password");
     expect(
-      screen.getByRole("button", { name: "privacy.vault.unlock" }),
+      screen.getByRole("button", { name: CREATE_BUTTON }),
     ).toBeInTheDocument();
+    // Irrecoverability is stated BEFORE a passphrase is chosen, not after.
+    expect(screen.getByText(IRRECOVERABLE_NOTICE)).toBeInTheDocument();
   });
 
-  it("moves focus to the passphrase input when it appears", () => {
+  it("moves focus to the passphrase input once the form is ready", async () => {
     renderShell();
 
-    expect(passphraseInput()).toHaveFocus();
+    await waitFor(() => expect(passphraseInput()).toHaveFocus());
+  });
+
+  it("offers a single passphrase field when a profile already exists", async () => {
+    await seedExistingProfile();
+
+    renderShell();
+
+    await screen.findByRole("button", { name: UNLOCK_BUTTON });
+    expect(screen.getByText(LOCKED_TITLE)).toBeInTheDocument();
+    // No confirmation field and no create affordance for an existing profile.
+    expect(screen.queryByLabelText(CONFIRM_LABEL)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: CREATE_BUTTON }),
+    ).not.toBeInTheDocument();
   });
 
   it("explains an incapable environment and offers no unlock form", () => {
@@ -115,6 +165,7 @@ describe("T3.3 — PiiLockedShell", () => {
 
     expect(screen.getByText(UNAVAILABLE_TITLE)).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(CONFIRM_LABEL)).not.toBeInTheDocument();
   });
 
   it("stays silent for an intentional demo session", () => {
@@ -123,6 +174,7 @@ describe("T3.3 — PiiLockedShell", () => {
     render(<PiiLockedShell />);
 
     expect(screen.queryByText(LOCKED_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(CREATE_TITLE)).not.toBeInTheDocument();
     expect(screen.queryByText(UNAVAILABLE_TITLE)).not.toBeInTheDocument();
   });
 
@@ -134,8 +186,60 @@ describe("T3.3 — PiiLockedShell", () => {
     expect(rendered).toBeEmptyDOMElement();
   });
 
-  it("unlocks with the passphrase typed and Enter, rehydrating the stores", async () => {
+  // --- create mode (MEDIUM-1) ---------------------------------------------
+
+  it("requires the confirmation before a passphrase can be created", async () => {
     renderShell();
+    await screen.findByLabelText(CONFIRM_LABEL);
+
+    const button = screen.getByRole("button", { name: CREATE_BUTTON });
+    expect(button).toBeDisabled();
+
+    await user.type(passphraseInput(), PASS);
+    expect(button).toBeDisabled();
+
+    await user.type(confirmInput(), PASS);
+    expect(button).toBeEnabled();
+  });
+
+  it("blocks creation and reports a mismatch without touching the vault", async () => {
+    renderShell();
+    await screen.findByLabelText(CONFIRM_LABEL);
+
+    await user.type(passphraseInput(), PASS);
+    await user.type(confirmInput(), WRONG_PASS);
+    await user.click(screen.getByRole("button", { name: CREATE_BUTTON }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(MISMATCH_ERROR);
+    expect(getPiiStoreAccessState()).toEqual({
+      status: "locked",
+      reason: "profile_locked",
+    });
+    // Nothing was derived, sealed or persisted.
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it("creates the passphrase and rehydrates when both fields match", async () => {
+    renderShell();
+    await screen.findByLabelText(CONFIRM_LABEL);
+
+    await user.type(passphraseInput(), PASS);
+    await user.type(confirmInput(), PASS);
+    await user.click(screen.getByRole("button", { name: CREATE_BUTTON }));
+
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(getPiiStoreAccessState()).toEqual({ status: "hydrated" });
+    // Memory-only: the passphrase never reaches localStorage.
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  // --- unlock mode (MEDIUM-1) ---------------------------------------------
+
+  it("unlocks with the passphrase typed and Enter, rehydrating the stores", async () => {
+    await seedExistingProfile();
+    renderShell();
+    await screen.findByRole("button", { name: UNLOCK_BUTTON });
 
     await user.type(passphraseInput(), PASS);
     await user.keyboard("{Enter}");
@@ -148,16 +252,10 @@ describe("T3.3 — PiiLockedShell", () => {
 
   it("keeps the shell up and reports a failed unlock without clearing the input safely", async () => {
     // Seed a real record so a wrong passphrase fails at unlock, then lock again.
-    await unlockPiiStoresAndRehydrate(PASS, options());
-    await createPiiStore(CUSTOMERS, options()).write(
-      '{"state":{"customers":[]},"version":1}',
-    );
-    lockAllPiiStores();
-    resetPiiStoreRuntimeForTests();
-    resetPiiStoreHydrationForTests();
-    configurePiiStoreRuntime(options());
+    await seedExistingProfile();
 
     renderShell();
+    await screen.findByRole("button", { name: UNLOCK_BUTTON });
     await user.type(passphraseInput(), WRONG_PASS);
     await user.keyboard("{Enter}");
 
@@ -169,5 +267,6 @@ describe("T3.3 — PiiLockedShell", () => {
     });
     // The failed passphrase is dropped from the field, never retained.
     expect(passphraseInput()).toHaveValue("");
+    expect(window.localStorage.length).toBe(0);
   });
 });

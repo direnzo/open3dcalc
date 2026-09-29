@@ -1,0 +1,174 @@
+# Beta 5 — Pacote de evidências de release e disclosure
+
+Documento de liberação do canal **beta web**. Reúne a identificação exata do artefato, o escopo
+entregue (waves 0–5), as evidências dos gates, as revisões da Themis e a **disclosure obrigatória**
+que deve acompanhar as release notes. Onde um dado não foi medido, está escrito **não medido** —
+nenhum número é estimado.
+
+Status atual: **evidências e disclosure prontas; tag/deploy aguardam autorização humana.**
+
+---
+
+## 1. Identificação
+
+| Campo          | Valor                                               |
+| -------------- | --------------------------------------------------- |
+| Produto        | Open3DCalc                                          |
+| Alvo           | `v2.0.0-beta.5` (canal **beta WEB**)                |
+| Branch         | `fix/beta5-privacy-remediation`                     |
+| Head (SHA)     | `6b1d186df9b125acd3d58dc54e5d9d1bfddc74f5`          |
+| PR             | #236                                                |
+| Base           | `main` @ `faa51d2e982ac5672fbcf4e107373c9187244211` |
+| `package.json` | `2.0.0-beta.4`                                      |
+
+> A versão em `package.json` ainda é `2.0.0-beta.4`: o **bump para `2.0.0-beta.5` é feito pelo
+> workflow `beta.yml`** no momento do corte da tag (`npm version` + commit + tag anotada). O
+> repositório não bumpa a versão manualmente.
+
+---
+
+## 2. Escopo entregue (waves 0–5)
+
+Trabalho de remediação de privacidade do beta, fechado como PR #236:
+
+1. **Vault de PII criptografado no browser** — IndexedDB `open3dcalc_pii_vault`, cada registro um
+   envelope AES-256-GCM selado com contrato de dados vinculados (AAD) equivalente ao desktop, sob
+   chave derivada de passphrase que existe **somente em memória** (não exportável, descartada ao
+   travar). Não há caminho de texto puro.
+2. **Remoção do mirror de PII plaintext do persistence-bridge** — as superfícies de PII deixam de
+   ser espelhadas em claro no `localStorage`/bridge de persistência.
+3. **Locked shell + hydration gate** — a aplicação não hidrata os stores de PII antes do
+   desbloqueio; o fluxo distingue explicitamente **criar** passphrase de **desbloquear**
+   (passphrase memory-only).
+4. **Sync vault-aware** — a sincronização passa a consultar o vault e **nunca grava PII em
+   texto puro**.
+5. **Re-home do PII plaintext legado para o vault** — consent-gated, verify-before-complete,
+   **copy-without-delete**, idempotente (re-home copia e verifica; nada é apagado).
+6. **UX de escolha de migração** — 5 opções explícitas (`migrate`, `keep`, `export`, `delete`,
+   `cancel`), sem aceitação implícita nem destruição silenciosa; a opção `delete` está
+   **desabilitada** (não existe erasure key-scoped verificada para essas chaves ainda).
+7. **Disclosure value-free de resíduo/marker** — o app informa a presença de resíduo plaintext
+   legado e do marker de migração sem vazar valores ou contagens sensíveis.
+8. **Fix de ordenação de escrita do vault (last-writer-wins real)** — `piiStore.write()` passou a
+   selar **dentro** da fila por chave, garantindo que a ordem de commit siga a ordem de chamada
+   (ver §3, fix de correção).
+
+---
+
+## 3. Evidência de gates
+
+### 3.1 CI — run `36568013313` @ `6b1d186`
+
+| Job             | Resultado                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------- |
+| `checks`        | ✅ success                                                                                              |
+| `test`          | ✅ success — **272 arquivos / 3847 testes**                                                             |
+| `build-desktop` | ✅ success                                                                                              |
+| `build-web`     | ⏭️ skipped — **tag-gated por design** (o build web do canal beta só roda via `beta-deploy.yml`, na tag) |
+
+### 3.2 Gates locais
+
+| Gate                                                            | Resultado                                                                  |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `test:run`                                                      | ✅ **272 arquivos / 3847 testes** — exit 0 em **2 execuções consecutivas** |
+| `coverage`                                                      | **statements 82.17 / branches 77.14 / functions 78.33 / lines 83**         |
+| `typecheck` (`tsc --noEmit -p tsconfig.app.json`)               | ✅ exit 0                                                                  |
+| `typecheck:electron` (`tsc -p electron/tsconfig.json --noEmit`) | ✅ exit 0                                                                  |
+| `lint` (ESLint `eslint .`)                                      | ✅ exit 0                                                                  |
+| `build:all` (desktop + web)                                     | ✅ exit 0                                                                  |
+
+> Cobertura: os quatro agregados foram medidos nesta branch. Limiares globais do Vitest e o
+> critério de aceitação de 60% da Beta 5 são objeto do gate final da Themis (§4).
+
+### 3.3 Fix de correção verificado (ordenação de escrita do vault)
+
+- **Causa raiz:** `piiStore.write()` **selava o valor antes de enfileirar**, de modo que a ordem de
+  commit seguia a ordem de conclusão do WebCrypto, não a ordem das chamadas. Duas escritas
+  encadeadas são operações criptográficas independentes e podem resolver fora de ordem; um valor
+  anterior (por exemplo o estado vazio inicial de uma action) podia ser enfileirado e commitado
+  **depois** do mais novo e vencer — last-writer-wins invertido.
+- **Correção:** o selo passou a ocorrer **dentro da fila por chave** (`bdf5d99`), de modo que a fila
+  fixa a **ordem** além da contagem; `rehydratePiiStores()`/`unlockPiiStoresAndRehydrate()` passaram
+  a aguardar `whenPiiWritesSettled()` antes de ler.
+- **Verificação de falsificabilidade:** a Themis **reverteu o fix em clone isolado** e o teste de
+  regressão determinístico de last-writer-wins **falhou (FAIL)** — o teste morde de fato. Com o fix
+  presente, passa.
+
+---
+
+## 4. Revisões
+
+| Revisão            | Commit revisado | Veredito             | Achados                | Situação                  |
+| ------------------ | --------------- | -------------------- | ---------------------- | ------------------------- |
+| Themis W3          | `a0a698a`       | **CHANGES_REQUIRED** | HIGH-1, HIGH-2, HIGH-3 | ✅ resolvidos             |
+| Themis full-branch | `bdf5d99`       | **CHANGES_REQUIRED** | H-4                    | ✅ resolvido em `6b1d186` |
+
+**Pendente:** aprovação da Themis no **exact-SHA final** (`6b1d186`). Enquanto essa revisão no SHA
+exato não ocorrer, o gate de release permanece aberto (§7).
+
+---
+
+## 5. Disclosure obrigatória (B2) — texto para release notes
+
+> **Beta 5 — privacidade e seus dados no canal WEB**
+>
+> - **Perfis WEB legados.** Para ver clientes, orçamentos e histórico antigos, é preciso definir uma
+>   **passphrase** e escolher a migração. **NADA é apagado**: o re-home copia e verifica, sem
+>   deletar os dados legados.
+> - **Resíduo plaintext legado e marker.** O resíduo em texto puro herdado e o marker
+>   `open3dcalc_migration_done_v2` **permanecem até a W4.4**. Ambos estão declarados no manifest e
+>   divulgados dentro do app.
+> - **DESKTOP indisponível nesta versão.** O re-home de PII no desktop **não está disponível** nesta
+>   versão — esta release é **web-only**. **Não publique artefato desktop.**
+> - **Vault travado não salva PII nova.** Enquanto o vault estiver **locked**, novas entradas de PII
+>   **não são salvas**; a UI avisa isso explicitamente.
+> - **Harness real de browser (W6) não construído nesta iteração.** Trata-se de um **resíduo
+>   conhecido desta iteração de beta** (ver §6).
+
+---
+
+## 6. Resíduos / limitações conhecidas e follow-ups rastreáveis
+
+| Item                      | Descrição                                                                                                           | Tipo              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| **W4.4 / T4.4**           | Política do marker `open3dcalc_migration_done_v2` (quando/quando não permanece)                                     | Follow-up         |
+| **T4.5**                  | Cleanup condicional do resíduo apenas quando `COUNT > 0`                                                            | Follow-up         |
+| **T4.6**                  | Drift indicator (sinalizar divergência entre vault e resíduo legado)                                                | Follow-up         |
+| **W6**                    | Harness real de browser + matriz de testes packaged (não construído nesta iteração; **não medido** além do exposto) | Resíduo conhecido |
+| **Re-home desktop / IPC** | Re-home de PII no desktop via IPC — indisponível nesta versão (release web-only)                                    | Follow-up         |
+| **L-1**                   | `PII_SYNC_KEYS` é **export morto** (`src/shared/lib/dataSync.ts`)                                                   | Follow-up         |
+| **L-2**                   | Re-prompt após `keep` (manter read-only) não ocorre nesta versão                                                    | Follow-up         |
+
+---
+
+## 7. Release gate checklist
+
+| #   | Gate                                                                                                                              | Status                           |
+| --- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| 1   | Implementação merged                                                                                                              | ⏳ (PR #236 OPEN na base `main`) |
+| 2   | Seis gates verdes (CI `checks`, `test`, `build-desktop`; local `test:run`, `typecheck`/`typecheck:electron`, `lint`, `build:all`) | ✅                               |
+| 3   | Themis aprovada no **exact-SHA** (`6b1d186`)                                                                                      | ⏳                               |
+| 4   | Disclosure publicada (§5 nas release notes)                                                                                       | ⏳                               |
+| 5   | Tag/deploy autorizado por humano                                                                                                  | ⏳                               |
+
+---
+
+## 8. Tag/deploy instructions
+
+1. **Cortar a beta** — _Actions → Beta channel → Run workflow_:
+   - `version = 2.0.0`
+   - `ref = main`
+     O `beta.yml` (`workflow_dispatch`) calcula `v2.0.0-beta.5`, bumpa `package.json` +
+     `package-lock.json`, cria a **tag anotada imutável** `v2.0.0-beta.5` e empurra commit + tag com o
+     PAT `BETA_RELEASE_TOKEN`.
+2. **Deploy automático** — a tag dispara `beta-deploy.yml`, que builda a web com
+   `VITE_BETA_CHANNEL=true`, publica em `gh-pages/beta/` (`keep_files: true`) e cria/refresha a
+   **prerelease** `v2.0.0-beta.5`. **Electron não é buildado** no canal beta.
+3. **Validação live:**
+   - `https://ils15.github.io/open3dcalc/beta/` → **HTTP 200** e bundle contendo a versão **beta.5**.
+   - Prerelease `v2.0.0-beta.5` presente no GitHub Releases.
+4. As tags beta são **imutáveis**: nunca reescreva/delete uma tag já publicada — corte `beta.6` para
+   ajustar qualquer coisa. O `beta-deploy.yml` é idempotente em re-execução para a mesma tag.
+
+> ⚠️ **web-only:** não publicar artefato desktop nesta versão (re-home desktop/IPC indisponível —
+> §5 e §6).

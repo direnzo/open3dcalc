@@ -23,6 +23,9 @@ Status atual: **evidências e disclosure prontas; tag/deploy aguardam autorizaç
 
 > **SHA de release:** será o commit de merge em `main` (a ser registrado no corte da tag).
 
+> **Branch de resíduos W4** (`fix/beta5-privacy-w4-residuals`): fecha os follow-ups W4.4/T4.4, T4.6,
+> L-1 e L-2 e reconcilia a tabela do §6 (ver também a disclosure do §5).
+
 > A versão em `package.json` ainda é `2.0.0-beta.4`: o **bump para `2.0.0-beta.5` é feito pelo
 > workflow `beta.yml`** no momento do corte da tag (`npm version` + commit + tag anotada). O
 > repositório não bumpa a versão manualmente.
@@ -122,9 +125,13 @@ aberto apenas para os itens humanos (§7).
 > - **Perfis WEB legados.** Para ver clientes, orçamentos e histórico antigos, é preciso definir uma
 >   **passphrase** e escolher a migração. **NADA é apagado**: o re-home copia e verifica, sem
 >   deletar os dados legados.
-> - **Resíduo plaintext legado e marker.** O resíduo em texto puro herdado e o marker
->   `open3dcalc_migration_done_v2` **permanecem até a W4.4**. Ambos estão declarados no manifest e
->   divulgados dentro do app.
+> - **Resíduo plaintext legado e marker.** O resíduo em texto puro herdado **permanece** (sem
+>   exclusão automática) até uma eliminação explícita e é divulgado no app. O código atual **nunca
+>   grava** o marker legado `open3dcalc_migration_done_v2`; ele só é lido para consumir/limpar um valor
+>   que uma versão antiga deixou. Enquanto esse valor existir, ele é **resíduo em texto puro** — o
+>   manifest declara `persistence: "encrypted_at_rest"` como a política para escritas **novas** (que
+>   não ocorrem) e a divergência está divulgada no purpose do manifest e no painel de resíduo do app.
+>   Uma migração nova registra progresso **sem valores** em `open3dcalc_migration_progress_v2`.
 > - **DESKTOP indisponível nesta versão.** O re-home de PII no desktop **não está disponível** nesta
 >   versão — esta release é **web-only**. **Não publique artefato desktop.**
 > - **Vault travado não salva PII nova.** Enquanto o vault estiver **locked**, novas entradas de PII
@@ -136,16 +143,20 @@ aberto apenas para os itens humanos (§7).
 
 ## 6. Resíduos / limitações conhecidas e follow-ups rastreáveis
 
-| Item                                   | Descrição                                                                                                                                                                      | Tipo              |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
-| **W4.4 / T4.4**                        | Política do marker `open3dcalc_migration_done_v2` (quando/quando não permanece)                                                                                                | Follow-up         |
-| **W4.4 / T4.4 (divergência manifest)** | O manifest declara `persistence: "encrypted_at_rest"` para o marker `open3dcalc_migration_done_v2`, que hoje é **plaintext** — divergência a explicitar no texto de disclosure | Follow-up         |
-| **T4.5**                               | Cleanup condicional do resíduo apenas quando `COUNT > 0`                                                                                                                       | Follow-up         |
-| **T4.6**                               | Drift indicator (sinalizar divergência entre vault e resíduo legado)                                                                                                           | Follow-up         |
-| **W6**                                 | Harness real de browser + matriz de testes packaged (não construído nesta iteração; **não medido** além do exposto)                                                            | Resíduo conhecido |
-| **Re-home desktop / IPC**              | Re-home de PII no desktop via IPC — indisponível nesta versão (release web-only)                                                                                               | Follow-up         |
-| **L-1**                                | `PII_SYNC_KEYS` é **export morto** (`src/shared/lib/dataSync.ts`)                                                                                                              | Follow-up         |
-| **L-2**                                | Re-prompt após `keep` (manter read-only) não ocorre nesta versão                                                                                                               | Follow-up         |
+| Item                                   | Descrição                                                                                                                                                                      | Situação nesta branch (`fix/beta5-privacy-w4-residuals`)                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| **W4.4 / T4.4**                        | Política do marker `open3dcalc_migration_done_v2` (quando/quando não permanece)                                                                                                | ✅ Implementado — o marker novo é value-free (`open3dcalc_migration_progress_v2`) |
+| **W4.4 / T4.4 (divergência manifest)** | O manifest declara `persistence: "encrypted_at_rest"` para o marker `open3dcalc_migration_done_v2`, que hoje é **plaintext** — divergência a explicitar no texto de disclosure | ✅ Divulgada — purpose do manifest + painel de resíduo no app (§5)                |
+| **T4.5**                               | Cleanup condicional do resíduo apenas quando `COUNT > 0`                                                                                                                       | Follow-up (não implementado nesta branch)                                         |
+| **T4.6**                               | Drift indicator (sinalizar divergência entre vault e resíduo legado)                                                                                                           | ✅ Implementado — `open3dcalc_migration_fingerprint_v1` (value-free)              |
+| **W6**                                 | Harness real de browser + matriz de testes packaged (não construído nesta iteração; **não medido** além do exposto)                                                            | Resíduo conhecido                                                                 |
+| **Re-home desktop / IPC**              | Re-home de PII no desktop via IPC — indisponível nesta versão (release web-only)                                                                                               | Follow-up                                                                         |
+| **L-1**                                | `PII_SYNC_KEYS` é **export morto** (`src/shared/lib/dataSync.ts`)                                                                                                              | ✅ Implementado — export removido                                                 |
+| **L-2**                                | Re-prompt após `keep` (manter read-only) não ocorre nesta versão                                                                                                               | ✅ Implementado — `open3dcalc_legacy_keep_readonly_v1` + reabertura no app        |
+
+> A coluna **Situação** substitui o antigo rótulo `Tipo`: os itens que esta branch resolve estão
+> marcados como implementados/divulgados; `T4.5`, W6 e o re-home desktop/IPC seguem como follow-ups
+> rastreáveis.
 
 ---
 

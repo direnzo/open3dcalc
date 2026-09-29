@@ -4,6 +4,11 @@ import { restoreAutoSnapshot } from "@/shared/stores/storeBridge";
 import { persistCalculatorSettings } from "@/shared/stores/calculatorStore.helpers";
 import { guardedStorage } from "@/shared/lib/manifestStorage";
 import {
+  MIGRATION_MARKER_KEY,
+  isHistoryMigrationBackup,
+  type HistoryMigrationBackup,
+} from "@/shared/lib/migration/marker";
+import {
   didPiiWritesCommit,
   getPiiStoreHydrationStatus,
   readPiiPersistedRecord,
@@ -18,11 +23,7 @@ import { useTutorialStore } from "@/shared/stores/tutorialStore";
 import { useLayoutStore } from "@/shared/stores/layoutStore";
 import { useTutorialTabNavigation } from "@/shared/hooks/useTutorialTabNavigation";
 import type { Tab } from "@/shared/components/AppShell/tabs";
-import type {
-  CalculationResult,
-  CalculationSnapshot,
-  HistoryEntry,
-} from "@/shared/types";
+import type { CalculationResult, CalculationSnapshot } from "@/shared/types";
 
 /**
  * App bootstrap shared by both platforms (V2.0 Wave 1).
@@ -53,14 +54,6 @@ type LegacyHistoryItem = {
   snapshot?: CalculationSnapshot | null;
 };
 
-type HistoryMigrationBackup = {
-  type: "open3dcalc-history-v2-backup";
-  source: string;
-  baseEntries: HistoryEntry[];
-  productsSource?: string;
-};
-
-const MIGRATION_MARKER_KEY = "open3dcalc_migration_done_v2";
 const HISTORY_KEY = "open3dcalc_history_v2";
 const PRODUCTS_KEY = "open3dcalc_products";
 
@@ -90,26 +83,6 @@ const FALLBACK_RESULT: CalculationResult = {
   actualMargin: 0,
   carbonFootprintGrams: 0,
 };
-
-function isHistoryMigrationBackup(
-  value: string,
-): HistoryMigrationBackup | null {
-  try {
-    const parsed = JSON.parse(value) as Partial<HistoryMigrationBackup>;
-    if (
-      parsed.type === "open3dcalc-history-v2-backup" &&
-      typeof parsed.source === "string" &&
-      Array.isArray(parsed.baseEntries) &&
-      (parsed.productsSource === undefined ||
-        typeof parsed.productsSource === "string")
-    ) {
-      return parsed as HistoryMigrationBackup;
-    }
-  } catch {
-    // A non-JSON marker is the legacy "migration complete" value.
-  }
-  return null;
-}
 
 async function migrateLegacyHistory(
   legacyItems: unknown[],

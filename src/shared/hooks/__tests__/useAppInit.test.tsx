@@ -1202,6 +1202,107 @@ describe("useAppInit tutorial auto-start", () => {
     expect(storageValues.has("open3dcalc_migration_progress_v2")).toBe(false);
   });
 
+  it("merges the legacy marker source with live entries and never resurrects a stale base entry", async () => {
+    const legacyMarkerKey = "open3dcalc_migration_done_v2";
+    const result = {
+      totalCost: 9,
+      sellPrice: 18,
+      profit: 9,
+      materialCost: 3,
+      energyCost: 1,
+      machineCost: 1,
+      hardwareCost: 0,
+      consumablesCost: 0,
+      laborCost: 1,
+      softwareCost: 0,
+      failureCost: 0,
+      extrasCost: 0,
+      postProcessingCost: 3,
+      subtotal: 9,
+      marketplaceFee: 0,
+      taxAmount: 0,
+      costPerGram: 0.18,
+      costPerUnit: 9,
+      unitWeight: 50,
+      estimatedPrintTime: 1,
+      targetMarginPercent: 50,
+      breakEvenPrice: 9,
+      actualMargin: 50,
+      carbonFootprintGrams: 2,
+    };
+    // A marker as an OLD build wrote it: the raw source is embedded (PII), and
+    // `baseEntries` is a STALE snapshot of what the store held at that time.
+    const legacyRecord = {
+      id: "legacy-marker-merge-01",
+      timestamp: 1_700_000_000_901,
+      type: "fdm",
+      summary: "Legado • merge",
+      totalCost: 9,
+      sellPrice: 18,
+      profit: 9,
+      result,
+      snapshot: null,
+    };
+    const staleBaseEntry = {
+      id: "legacy-base-deleted-01",
+      timestamp: 1_700_000_000_902,
+      type: "fdm",
+      name: "Apagada pelo usuário",
+      summary: "Apagada pelo usuário",
+      totalCost: 1,
+      sellPrice: 2,
+      profit: 1,
+      result,
+      snapshot: null,
+    };
+    storageValues.set(
+      legacyMarkerKey,
+      JSON.stringify({
+        type: "open3dcalc-history-v2-backup",
+        source: JSON.stringify([legacyRecord]),
+        baseEntries: [staleBaseEntry],
+      }),
+    );
+
+    await unlockVault();
+
+    // Between the interruption and this resume the user created a history entry
+    // AND deleted the one the stale snapshot still holds. A MERGE must keep the
+    // former and must NOT resurrect the latter.
+    const userEntry: HistoryEntry = {
+      id: "user-entry-after-marker-interrupt",
+      timestamp: 1_700_000_900_100,
+      type: "fdm",
+      name: "Peça do usuário",
+      summary: "Peça do usuário",
+      totalCost: 5,
+      sellPrice: 10,
+      profit: 5,
+      result,
+      snapshot: null,
+    };
+    useHistoryStore.setState({ entries: [userEntry] });
+    await settleWrites();
+
+    renderHook(() => useAppInit(vi.fn()));
+    await vi.waitFor(() =>
+      expect(storageValues.has(legacyMarkerKey)).toBe(false),
+    );
+    await settleWrites();
+
+    const entries = useHistoryStore.getState().entries;
+    const ids = entries.map((entry) => entry.id);
+    // The user's entry AND the marker's embedded legacy record survive…
+    expect(ids).toContain("user-entry-after-marker-interrupt");
+    expect(ids).toContain("legacy-marker-merge-01");
+    // …the stale base snapshot does NOT resurrect a deletion…
+    expect(ids).not.toContain("legacy-base-deleted-01");
+    // …and there is no duplicate.
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(entries).toHaveLength(2);
+    await expect(vaultHistoryEntries()).resolves.toHaveLength(2);
+  });
+
   it("clears the value-free progress marker when no legacy source remains", async () => {
     const progressKey = "open3dcalc_migration_progress_v2";
     // An interrupted run left the value-free flag, but the source is gone (a

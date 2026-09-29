@@ -338,6 +338,13 @@ function migrateLegacyData(): void {
  * Read compatibility only: the preimage lives in the marker's `source`, which
  * is consumed here. The marker is cleared after the run verifies (§3.3) — the
  * current code never writes it.
+ *
+ * MERGE, never reset: the marker's `baseEntries` is a STALE snapshot taken
+ * before the interruption. Resetting to it would discard every entry created
+ * after the interruption and would resurrect an entry the user deleted since.
+ * The base this resume preserves is therefore the store's CURRENT contents,
+ * exactly as `resumeFromLiveSource` does; the marker's embedded `source` is
+ * merged on top, deduplicated, so the final set is the lossless union.
  */
 async function resumeFromLegacyMarker(
   backup: HistoryMigrationBackup,
@@ -348,7 +355,7 @@ async function resumeFromLegacyMarker(
     await migrateLegacyHistory(
       parsed,
       {
-        baseEntries: backup.baseEntries,
+        baseEntries: useHistoryStore.getState().entries,
         ...(backup.productsSource === undefined
           ? {}
           : { productsSource: backup.productsSource }),

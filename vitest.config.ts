@@ -15,6 +15,13 @@ export default defineConfig(
         "dist",
         "dist-web",
         "Example/**",
+        // Browser-mode specs run in a real Chromium via `vitest.browser.config.ts`
+        // (`npm run test:browser`) and would fail here: jsdom has no IndexedDB
+        // and reports `window.isSecureContext` as `undefined`, which the vault's
+        // gate correctly treats as a denial. They match the default include glob,
+        // so they must be excluded explicitly; the browser config's own `include`
+        // is the other half of the split.
+        "src/**/*.browser.test.ts",
       ],
       coverage: {
         provider: "v8",

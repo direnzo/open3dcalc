@@ -11,13 +11,16 @@
  *  2. **The re-consent consequence.** A new declared PII surface is a
  *     privacy-contract change, so `policy_version` moves 1.6 → 1.7 and a
  *     SPEC-04 receipt issued under 1.6 evaluates `policy_mismatch`.
- *  3. **The egress exclusion.** The vault must be unreachable from
- *     `dataSync.ts`. That guarantee is STRUCTURAL — `dataSync` reads a fixed
- *     list of `localStorage` key literals and never enumerates a store — and a
- *     structural guarantee is exactly the kind that gets broken by one careless
- *     `for (const key of ...)` later. Both halves are pinned: the behaviour
- *     (a sealed sentinel never appears in a collected bundle) and the shape
- *     (the source contains no storage enumeration and no vault reference).
+ *  3. **The egress path.** `dataSync` reaches the vault-backed PII ONLY by
+ *     reading the three hydrated stores — never by opening IndexedDB, naming
+ *     the vault record, or enumerating storage. That guarantee is STRUCTURAL —
+ *     `dataSync` reads a fixed list of `localStorage` key literals plus the
+ *     three store singletons and never enumerates a store — and a structural
+ *     guarantee is exactly the kind that gets broken by one careless
+ *     `for (const key of ...)` later. Both halves are pinned: the behaviour (an
+ *     unhydrated vault leaks nothing, and the SEALED record never appears in a
+ *     collected bundle) and the shape (the source contains no storage
+ *     enumeration, no `indexedDB`, and no vault reference).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -38,6 +41,14 @@ import {
   unlockPiiStore,
 } from "@/shared/lib/crypto/piiStore";
 import { setDemoPersistenceSuppressed } from "@/shared/lib/manifestStorage";
+import {
+  configurePiiStoreRuntime,
+  rehydratePiiStores,
+  resetPiiStoreHydrationForTests,
+} from "@/shared/lib/crypto/piiStoreHydration";
+import { useCustomerStore } from "@/shared/stores/customerStore";
+import { useHistoryStore } from "@/shared/stores/historyStore";
+import { useQuoteStore } from "@/shared/stores/quoteStore";
 import {
   setPiiPersistenceDeclined,
   setPiiStoreEnvironment,
@@ -216,8 +227,20 @@ describe("ADR-001 §3.3: the browser and Electron schema versions agree", () => 
   });
 });
 
-describe("Egress: dataSync cannot reach the vault", () => {
+describe("Egress: dataSync reads PII only through the hydrated stores", () => {
   let idb: FakeIndexedDb;
+
+  const options = () => ({
+    indexedDb: idb.factory,
+    environment: PII_STORE_ENVIRONMENT,
+  });
+
+  /** Return the three migrated stores to their empty initial state. */
+  function resetStores(): void {
+    useHistoryStore.setState({ entries: [] });
+    useCustomerStore.setState({ customers: [] });
+    useQuoteStore.setState({ quotes: [], nextNumber: 1 });
+  }
 
   beforeEach(async () => {
     idb = createFakeIndexedDb();
@@ -226,13 +249,12 @@ describe("Egress: dataSync cannot reach the vault", () => {
     setDemoPersistenceSuppressed(false);
     lockAllPiiStores();
     resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
     zeroizeSessionPassphrase();
-    const options = {
-      indexedDb: idb.factory,
-      environment: PII_STORE_ENVIRONMENT,
-    };
-    await unlockPiiStore(CUSTOMERS, PASS, options);
-    await createPiiStore(CUSTOMERS, options).write(
+    resetStores();
+    configurePiiStoreRuntime(options());
+    await unlockPiiStore(CUSTOMERS, PASS, options());
+    await createPiiStore(CUSTOMERS, options()).write(
       `{"state":{"customers":[{"name":"Fernanda Sintética","tag":"${SENTINEL}"}]},"version":1}`,
     );
   });
@@ -242,21 +264,39 @@ describe("Egress: dataSync cannot reach the vault", () => {
     setPiiPersistenceDeclined(false);
     setDemoPersistenceSuppressed(false);
     lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
     zeroizeSessionPassphrase();
+    resetStores();
     window.localStorage.clear();
   });
 
-  it("a sealed vault record never appears in a collected sync bundle", () => {
-    // Behavioural half. The sentinel exists only inside the sealed record, so
-    // if `collectSyncData()` can reach the vault it WILL show up here.
+  it("an unhydrated vault leaks nothing; the hydrated store is the only egress", async () => {
+    // The record exists and is SEALED — a plaintext copy would make this test
+    // prove nothing.
     expect(idb.raw("envelopes", CUSTOMERS)).toBeTypeOf("string");
-    const bundle = JSON.stringify(collectSyncData());
-    expect(bundle).not.toContain(SENTINEL);
-    expect(bundle).not.toContain("Fernanda");
-    // And the three legacy localStorage keys ARE collected, so this is not a
-    // vacuous pass caused by the collector returning nothing at all.
-    const data = collectSyncData();
-    expect(data.customers).toBeDefined();
+
+    // Unhydrated: `dataSync` reads the (empty) store, so it cannot reach the
+    // vault on its own. The sentinel lives only inside the sealed record.
+    const unhydrated = collectSyncData();
+    expect(JSON.stringify(unhydrated)).not.toContain(SENTINEL);
+    expect(JSON.stringify(unhydrated)).not.toContain("Fernanda");
+    expect(unhydrated.customers).toEqual([]);
+
+    // Production precondition: the vault is unlocked, so the stores now
+    // rehydrate FROM the vault. The store projection IS collected — that is
+    // the HIGH-2 fix — but only as the store's plaintext, never as the sealed
+    // record and never as an IndexedDB reference.
+    const outcomes = await rehydratePiiStores();
+    expect(outcomes.find((outcome) => outcome.key === CUSTOMERS)?.status).toBe(
+      "hydrated",
+    );
+
+    const hydrated = collectSyncData();
+    expect(JSON.stringify(hydrated.customers)).toContain(SENTINEL);
+    const serialized = JSON.stringify(hydrated);
+    expect(serialized).not.toContain(idb.raw("envelopes", CUSTOMERS) as string);
+    expect(serialized).not.toContain(PII_VAULT_KEY);
   });
 
   it("the vault is absent from the collector's key list, by name", () => {

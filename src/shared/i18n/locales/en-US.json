@@ -2226,7 +2226,8 @@
       "passwordPlaceholder": "Enter a password (optional)",
       "button": "Export Data",
       "success": "Data exported successfully",
-      "downloading": "Preparing download..."
+      "downloading": "Preparing download...",
+      "piiExcluded": "Customers, quotes and history were NOT included: they are protected by the encrypted vault and were unavailable at export time. Unlock the vault and export again to include them."
     },
     "import": {
       "tab": "Import",
@@ -2248,6 +2249,7 @@
       "importing": "Importing data...",
       "invalidFile": "Invalid or corrupted file",
       "wrongPassword": "Wrong password",
+      "piiRefused": "Customers, quotes and history were NOT imported: the encrypted vault was locked or unavailable. Unlock the vault and import again; nothing was written in plaintext.",
       "results": {
         "imported": "{{count}} items imported",
         "conflicts": "{{count}} conflicts resolved",

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { manifestStorage, guardedStorage } from "@/shared/lib/manifestStorage";
+import {
+  manifestStorage,
+  guardedStorage,
+  guardedSyncStorage,
+} from "@/shared/lib/manifestStorage";
 import {
   resetManifestForTests,
   ManifestError,
@@ -68,6 +72,61 @@ describe("guardedStorage (S1)", () => {
       .join(" ");
     expect(logged).not.toContain("João da Silva");
     expect(logged).not.toContain("joao@example.com");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HIGH-1: the sync path must never write a manifest-declared PII key to
+// localStorage as plaintext. `guardedSyncStorage` composes the allowlist with
+// the `pii:true` predicate and refuses at that choke point.
+// ---------------------------------------------------------------------------
+
+describe("guardedSyncStorage (HIGH-1 plaintext-PII write guard)", () => {
+  const OLD_ENV = process.env.NODE_ENV;
+
+  beforeEach(() => {
+    resetManifestForTests(manifestFixture as ManifestDocument);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    resetManifestForTests(null);
+    vi.restoreAllMocks();
+    process.env.NODE_ENV = OLD_ENV;
+    window.localStorage.clear();
+  });
+
+  it.each([
+    "open3dcalc_history_v2",
+    "open3dcalc_customers_v1",
+    "open3dcalc_quotes_v1",
+  ])("refuses a plaintext PII write for %s in dev", (key) => {
+    process.env.NODE_ENV = "development";
+    expect(() => guardedSyncStorage.setItem(key, '{"state":{}}')).toThrow(
+      ManifestError,
+    );
+    expect(window.localStorage.getItem(key)).toBeNull();
+    // Key NAMES only — never the value (TEST-MATRIX 3.2).
+    const logged = vi.mocked(console.warn).mock.calls.flat().join(" ");
+    expect(logged).toContain(key);
+    expect(logged).not.toContain('{"state":{}}');
+  });
+
+  it("deny-safes a plaintext PII write in production (no crash, no write)", () => {
+    process.env.NODE_ENV = "production";
+    expect(() =>
+      guardedSyncStorage.setItem("open3dcalc_customers_v1", '{"state":{}}'),
+    ).not.toThrow();
+    expect(window.localStorage.getItem("open3dcalc_customers_v1")).toBeNull();
+  });
+
+  it("delegates a non-PII key to guardedStorage unchanged", () => {
+    guardedSyncStorage.setItem("open3dcalc_theme", "dark");
+    expect(window.localStorage.getItem("open3dcalc_theme")).toBe("dark");
+    expect(guardedSyncStorage.getItem("open3dcalc_theme")).toBe("dark");
+    guardedSyncStorage.removeItem("open3dcalc_theme");
+    expect(window.localStorage.getItem("open3dcalc_theme")).toBeNull();
   });
 });
 

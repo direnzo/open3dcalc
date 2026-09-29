@@ -15,7 +15,8 @@
  * Zero external dependencies — browser-native Web Crypto only.
  */
 
-import { guardedStorage } from "@/shared/lib/manifestStorage";
+import { guardedSyncStorage } from "@/shared/lib/manifestStorage";
+import { getPiiStoreAccessState } from "@/shared/lib/crypto/piiStoreHydration";
 import {
   createExportEnvelope,
   readExportEnvelope,
@@ -30,6 +31,7 @@ import { useHistoryStore } from "@/shared/stores/historyStore";
 import { useCustomerStore } from "@/shared/stores/customerStore";
 import { useQuoteStore } from "@/shared/stores/quoteStore";
 import { useProductInventory } from "@/shared/stores/productInventory";
+import type { Customer, HistoryEntry, Quote } from "@/shared/types";
 import {
   useColorPalette,
   type CustomColor,
@@ -121,12 +123,39 @@ const KEYS = {
   modelComparison: "open3dcalc_model_comparison",
 } as const;
 
+/**
+ * The three PII keys migrated onto the encrypted vault (Wave 3). They are
+ * NEVER written to `localStorage` by this module: `collectSyncData` reads them
+ * from the hydrated stores and `applySyncData` writes them back through those
+ * stores (which persist to the vault). `guardedSyncStorage` additionally
+ * refuses a plaintext write for any key the manifest marks `pii:true`, so a
+ * future edit cannot silently reintroduce the leak (HIGH-1).
+ */
+export const PII_SYNC_KEYS = [
+  KEYS.history,
+  KEYS.customers,
+  KEYS.quotes,
+] as const;
+
+/**
+ * Whether the vault-backed PII stores are hydrated and therefore safe to sync.
+ *
+ * `true` only once the vault is unlocked AND all three stores rehydrated. When
+ * false the stores are empty (a locked store never hydrates), so an export
+ * without this check would be silently empty and an import would silently
+ * vanish. Callers surface the state instead of guessing.
+ */
+export function isPiiSyncAvailable(): boolean {
+  return getPiiStoreAccessState().status === "hydrated";
+}
+
+/**
+ * Persist-wrapper versions for the NON-PII keys that are still plain JSON in
+ * `localStorage`. The PII keys are no longer read or written here.
+ */
 const PERSIST_VERSIONS: Partial<
   Record<(typeof KEYS)[keyof typeof KEYS], number>
 > = {
-  [KEYS.history]: 2,
-  [KEYS.customers]: 1,
-  [KEYS.quotes]: 1,
   [KEYS.products]: 1,
   [KEYS.modelComparison]: 1,
 };
@@ -156,7 +185,7 @@ function base64ToBytes(b64: string): Uint8Array {
 function getRaw(key: string): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return guardedStorage.getItem(key);
+    return guardedSyncStorage.getItem(key);
   } catch {
     return null;
   }
@@ -223,7 +252,7 @@ function writeJSON(key: string, value: unknown): void {
     try {
       const parsed = JSON.parse(raw);
       if (isPersistWrapper(parsed)) {
-        guardedStorage.setItem(
+        guardedSyncStorage.setItem(
           key,
           JSON.stringify({ state: value, version: parsed.version }),
         );
@@ -233,16 +262,19 @@ function writeJSON(key: string, value: unknown): void {
       /* ignore malformed value */
     }
   }
-  guardedStorage.setItem(key, JSON.stringify(value));
+  guardedSyncStorage.setItem(key, JSON.stringify(value));
 }
 
-/** Patch a persist-wrapped key, keeping its other state fields and version. */
+/**
+ * Patch a persist-wrapped NON-PII key, keeping its other state fields and
+ * version. PII keys never reach here — they are applied through their stores.
+ */
 function writePersistState(
   key: (typeof KEYS)[keyof typeof KEYS],
   patch: Record<string, unknown>,
 ): void {
   const { state, version } = readPersistState(key);
-  guardedStorage.setItem(
+  guardedSyncStorage.setItem(
     key,
     JSON.stringify({ state: { ...state, ...patch }, version }),
   );
@@ -261,40 +293,26 @@ function isCustomItem(item: unknown): boolean {
 /* ------------------------------------------------------------------ */
 
 /**
- * Collect all syncable data from localStorage into a SyncData object.
- * Missing/corrupt keys fall back to their empty default so an export
- * never fails because of one bad key.
+ * Collect all syncable data into a SyncData object.
+ *
+ * PII (history/customers/quotes) is read from the hydrated stores, which are
+ * the encrypted vault's in-memory projection — never from a plaintext
+ * `localStorage` literal, which is what made the post-Wave-3 export silently
+ * empty (HIGH-2a). Non-PII keys keep reading `localStorage` through the
+ * guarded sync storage. Missing/corrupt non-PII values fall back to their
+ * empty default so an export never fails because of one bad key.
  */
 export function collectSyncData(): SyncData {
   const settings = readPlainJSON<Record<string, unknown>>(KEYS.settings, {});
 
-  const historyRaw = readPlainJSON<unknown>(KEYS.history, null);
-  const historyState = unwrapPersist(historyRaw);
-  const history = Array.isArray(historyState.entries)
-    ? historyState.entries
-    : Array.isArray(historyRaw)
-      ? historyRaw
-      : [];
-
-  const customersRaw = readPlainJSON<unknown>(KEYS.customers, null);
-  const customersState = unwrapPersist(customersRaw);
-  const customers = Array.isArray(customersState.customers)
-    ? customersState.customers
-    : Array.isArray(customersRaw)
-      ? customersRaw
-      : [];
-
-  const quotesRaw = readPlainJSON<unknown>(KEYS.quotes, null);
-  const quotesState = unwrapPersist(quotesRaw);
-  const quotes = Array.isArray(quotesState.quotes)
-    ? quotesState.quotes
-    : Array.isArray(quotesRaw)
-      ? quotesRaw
-      : [];
+  const history = useHistoryStore.getState().entries;
+  const customers = useCustomerStore.getState().customers;
+  const quotes = useQuoteStore.getState().quotes;
+  const nextNumber = useQuoteStore.getState().nextNumber;
+  // Omitted for a fresh store (nextNumber defaults to 1) so an empty export
+  // keeps the historical shape; carried once at least one quote exists.
   const quotesNextNumber =
-    typeof quotesState.nextNumber === "number"
-      ? quotesState.nextNumber
-      : undefined;
+    typeof nextNumber === "number" && nextNumber > 1 ? nextNumber : undefined;
 
   const catalog = readPlainJSON<{
     printers?: unknown[];
@@ -570,8 +588,21 @@ function hasContent(value: Record<string, unknown>): boolean {
   return Object.keys(value).length > 0;
 }
 
+export interface ApplySyncDataResult {
+  /** Categories applied. */
+  imported: string[];
+  /** Categories where id collisions were resolved. */
+  conflicts: string[];
+  /**
+   * PII categories refused because the encrypted vault was not hydrated.
+   * They were NOT written anywhere — no plaintext, no half-applied memory —
+   * and the caller must surface the refusal instead of reporting success.
+   */
+  refused: string[];
+}
+
 /**
- * Apply imported SyncData to localStorage.
+ * Apply imported SyncData.
  *
  * Strategy:
  *  - merge:   collections (history/customers/quotes) are unioned and
@@ -581,16 +612,22 @@ function hasContent(value: Record<string, unknown>): boolean {
  *  - replace: collections and plain values are fully replaced by the
  *             imported data (built-in catalog items are still preserved).
  *
+ * PII categories are written to the hydrated stores (which persist to the
+ * encrypted vault), never to `localStorage` (HIGH-1). A refused vault (locked
+ * or incapable) leaves those categories untouched and lists them in `refused`
+ * rather than accepting an import that would silently vanish (HIGH-2b).
+ *
  * Empty imported categories are ignored in merge mode so a device without
- * data cannot wipe another device's data. Returns the applied categories
- * and the categories where id collisions were resolved.
+ * data cannot wipe another device's data.
  */
 export function applySyncData(
   data: SyncData,
   mode: "merge" | "replace",
-): { imported: string[]; conflicts: string[] } {
+): ApplySyncDataResult {
   const imported: string[] = [];
   const conflicts: string[] = [];
+  const refused: string[] = [];
+  const piiWritable = isPiiSyncAvailable();
 
   if (hasContent(data.settings) || mode === "replace") {
     writeJSON(KEYS.settings, data.settings);
@@ -598,66 +635,77 @@ export function applySyncData(
   }
 
   if (data.history.length > 0 || mode === "replace") {
-    const local = readPersistState(KEYS.history);
-    const localEntries = Array.isArray(local.state.entries)
-      ? local.state.entries
-      : [];
-    if (mode === "replace") {
-      writePersistState(KEYS.history, { entries: data.history });
+    if (!piiWritable) {
+      refused.push("history");
     } else {
-      const { merged, conflicts: c } = mergeById(localEntries, data.history);
-      writePersistState(KEYS.history, { entries: merged });
-      if (c > 0) conflicts.push("history");
+      const localEntries = useHistoryStore.getState().entries;
+      if (mode === "replace") {
+        useHistoryStore.setState({ entries: data.history as HistoryEntry[] });
+      } else {
+        const { merged, conflicts: c } = mergeById(localEntries, data.history);
+        useHistoryStore.setState({ entries: merged as HistoryEntry[] });
+        if (c > 0) conflicts.push("history");
+      }
+      imported.push("history");
     }
-    imported.push("history");
   }
 
   if (data.customers.length > 0 || mode === "replace") {
-    const local = readPersistState(KEYS.customers);
-    const localCustomers = Array.isArray(local.state.customers)
-      ? local.state.customers
-      : [];
-    if (mode === "replace") {
-      writePersistState(KEYS.customers, { customers: data.customers });
+    if (!piiWritable) {
+      refused.push("customers");
     } else {
-      const { merged, conflicts: c } = mergeById(
-        localCustomers,
-        data.customers,
-      );
-      writePersistState(KEYS.customers, { customers: merged });
-      if (c > 0) conflicts.push("customers");
+      const localCustomers = useCustomerStore.getState().customers;
+      if (mode === "replace") {
+        useCustomerStore.setState({
+          customers: data.customers as Customer[],
+        });
+      } else {
+        const { merged, conflicts: c } = mergeById(
+          localCustomers,
+          data.customers,
+        );
+        useCustomerStore.setState({ customers: merged as Customer[] });
+        if (c > 0) conflicts.push("customers");
+      }
+      imported.push("customers");
     }
-    imported.push("customers");
   }
 
   if (data.quotes.length > 0 || mode === "replace") {
-    const local = readPersistState(KEYS.quotes);
-    const localQuotes = Array.isArray(local.state.quotes)
-      ? local.state.quotes
-      : [];
-    const localNext =
-      typeof local.state.nextNumber === "number" ? local.state.nextNumber : 1;
-    const importedNext =
-      typeof data.quotesNextNumber === "number" ? data.quotesNextNumber : 1;
-    if (mode === "replace") {
-      const minimumNext = data.quotes.reduce<number>((maximum, quote) => {
-        const number = (quote as { number?: unknown } | null)?.number;
-        return typeof number === "number"
-          ? Math.max(maximum, number + 1)
-          : maximum;
-      }, 1);
-      writePersistState(KEYS.quotes, {
-        quotes: data.quotes,
-        nextNumber: Math.max(importedNext, minimumNext),
-      });
+    if (!piiWritable) {
+      refused.push("quotes");
     } else {
-      // A merge must avoid collisions with quote numbers from either device.
-      const nextNumber = Math.max(localNext, importedNext) + 1;
-      const { merged, conflicts: c } = mergeById(localQuotes, data.quotes);
-      writePersistState(KEYS.quotes, { quotes: merged, nextNumber });
-      if (c > 0) conflicts.push("quotes");
+      const quoteState = useQuoteStore.getState();
+      const localNext =
+        typeof quoteState.nextNumber === "number" ? quoteState.nextNumber : 1;
+      const importedNext =
+        typeof data.quotesNextNumber === "number" ? data.quotesNextNumber : 1;
+      if (mode === "replace") {
+        const minimumNext = data.quotes.reduce<number>((maximum, quote) => {
+          const number = (quote as { number?: unknown } | null)?.number;
+          return typeof number === "number"
+            ? Math.max(maximum, number + 1)
+            : maximum;
+        }, 1);
+        useQuoteStore.setState({
+          quotes: data.quotes as Quote[],
+          nextNumber: Math.max(importedNext, minimumNext),
+        });
+      } else {
+        // A merge must avoid collisions with quote numbers from either device.
+        const nextNumber = Math.max(localNext, importedNext) + 1;
+        const { merged, conflicts: c } = mergeById(
+          quoteState.quotes,
+          data.quotes,
+        );
+        useQuoteStore.setState({
+          quotes: merged as Quote[],
+          nextNumber,
+        });
+        if (c > 0) conflicts.push("quotes");
+      }
+      imported.push("quotes");
     }
-    imported.push("quotes");
   }
 
   const catalogResult = applyCatalog(data.catalog, mode);
@@ -699,7 +747,7 @@ export function applySyncData(
   }
 
   if (data.theme !== "" || mode === "replace") {
-    guardedStorage.setItem(KEYS.theme, data.theme);
+    guardedSyncStorage.setItem(KEYS.theme, data.theme);
     imported.push("theme");
   }
 
@@ -707,7 +755,7 @@ export function applySyncData(
     const { goal, ...dashboardV1 } = data.dashboard;
     writeJSON(KEYS.dashboard, dashboardV1);
     if (typeof goal === "string" && goal !== "") {
-      guardedStorage.setItem(KEYS.dashboardGoal, goal);
+      guardedSyncStorage.setItem(KEYS.dashboardGoal, goal);
     }
     imported.push("dashboard");
   }
@@ -751,7 +799,7 @@ export function applySyncData(
 
   synchronizeActiveStores(data, mode);
 
-  return { imported, conflicts };
+  return { imported, conflicts, refused };
 }
 
 const CALCULATOR_SETTING_KEYS = [
@@ -794,9 +842,11 @@ function synchronizeActiveStores(
   data: SyncData,
   mode: "merge" | "replace",
 ): void {
-  useHistoryStore.persist.rehydrate();
-  useCustomerStore.persist.rehydrate();
-  useQuoteStore.persist.rehydrate();
+  // The three PII stores are written directly by `applySyncData` (their
+  // in-memory state IS the imported result) and persist to the vault on their
+  // own. Rehydrating them here would re-read a vault write that is still in
+  // flight and could revert the import to stale data — so they are deliberately
+  // not rehydrated. Products and model comparison are still plaintext stores.
   useProductInventory.persist.rehydrate();
   useModelComparison.persist.rehydrate();
   useColorPalette.setState({
@@ -1030,7 +1080,7 @@ async function applyImport(
   bundle: ExportBundle | EncryptedBundle,
   password: string | undefined,
   mode: "merge" | "replace",
-): Promise<{ imported: string[]; conflicts: string[] }> {
+): Promise<ApplySyncDataResult> {
   if (!validateBundle(bundle)) {
     throw new Error(
       "Formato de arquivo de exportação inválido ou não suportado.",
@@ -1092,12 +1142,13 @@ async function applyImport(
 
 /**
  * Import a bundle (merge mode): validates format, decrypts when needed,
- * verifies the checksum and applies the data to localStorage.
+ * verifies the checksum and applies the data. Non-PII keys land in
+ * `localStorage`; PII keys land in the hydrated vault-backed stores.
  */
 export async function importBundle(
   bundle: ExportBundle | EncryptedBundle,
   password?: string,
-): Promise<{ imported: string[]; conflicts: string[] }> {
+): Promise<ApplySyncDataResult> {
   return applyImport(bundle, password, "merge");
 }
 
@@ -1108,12 +1159,25 @@ export async function importBundle(
 export interface DataSyncExportResult {
   fileName: string;
   sizeBytes: number;
+  /**
+   * Whether the vault-backed PII stores were available and their data was
+   * included. `false` means customers/quotes/history were NOT in the file
+   * because the vault was locked or incapable — the UI must say so rather
+   * than let the user believe an empty-PII export was complete (HIGH-2a).
+   */
+  piiIncluded: boolean;
 }
 
 export interface DataSyncImportResult {
   imported: number;
   conflicts: number;
   errors: number;
+  /**
+   * PII categories refused because the vault was not hydrated. Nothing was
+   * written for them (no plaintext, no partial state) — the UI must surface
+   * the refusal (HIGH-1 / HIGH-2b).
+   */
+  piiRefused: string[];
 }
 
 export interface DataSyncError extends Error {
@@ -1163,12 +1227,13 @@ export async function exportData(options: {
       "O pacote de exportação é sempre criptografado: informe uma senha.",
     );
   }
+  const piiIncluded = isPiiSyncAvailable();
   const payload = collectSyncData();
   const envelope = await createExportEnvelope(payload, options.password);
   const blob = new Blob([envelope], { type: "application/json" });
   const fileName = syncFileName();
   triggerDownload(blob, fileName);
-  return { fileName, sizeBytes: blob.size };
+  return { fileName, sizeBytes: blob.size, piiIncluded };
 }
 
 /**
@@ -1221,6 +1286,7 @@ export async function importData(
         imported: result.imported.length,
         conflicts: result.conflicts.length,
         errors: 0,
+        piiRefused: result.refused,
       };
     } catch (error) {
       if (error instanceof EnvelopeError) {
@@ -1245,6 +1311,7 @@ export async function importData(
       imported: result.imported.length,
       conflicts: result.conflicts.length,
       errors: 0,
+      piiRefused: result.refused,
     };
   } catch (error) {
     const message =

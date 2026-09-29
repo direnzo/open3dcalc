@@ -48,7 +48,12 @@ describe("DataSyncModal import confirmation", () => {
     mockImportData.mockReset();
     mockExportData.mockReset();
     mockIsEncrypted.mockReset().mockResolvedValue(false);
-    mockImportData.mockResolvedValue({ imported: 5, conflicts: 0, errors: 0 });
+    mockImportData.mockResolvedValue({
+      imported: 5,
+      conflicts: 0,
+      errors: 0,
+      piiRefused: [],
+    });
   });
 
   it("imports immediately in merge mode without confirmation", () => {

@@ -2226,7 +2226,8 @@
       "passwordPlaceholder": "Digite uma senha (opcional)",
       "button": "Exportar Dados",
       "success": "Dados exportados com sucesso",
-      "downloading": "Preparando download..."
+      "downloading": "Preparando download...",
+      "piiExcluded": "Clientes, orçamentos e histórico NÃO foram incluídos: eles são protegidos pelo cofre criptografado e estavam indisponíveis no momento da exportação. Desbloqueie o cofre e exporte novamente para incluí-los."
     },
     "import": {
       "tab": "Importar",
@@ -2248,6 +2249,7 @@
       "importing": "Importando dados...",
       "invalidFile": "Arquivo inválido ou corrompido",
       "wrongPassword": "Senha incorreta",
+      "piiRefused": "Clientes, orçamentos e histórico NÃO foram importados: o cofre criptografado estava bloqueado ou indisponível. Desbloqueie o cofre e importe novamente; nada foi gravado em texto simples.",
       "results": {
         "imported": "{{count}} itens importados",
         "conflicts": "{{count}} conflitos resolvidos",

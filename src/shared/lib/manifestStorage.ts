@@ -26,7 +26,7 @@ import {
   type PersistStorage,
   type StateStorage,
 } from "zustand/middleware";
-import { checkKey } from "./manifestGate.js";
+import { checkKey, isPiiKey, ManifestError } from "./manifestGate.js";
 import { setDemoSuppressedForPiiGate } from "./crypto/piiStoreCapability.js";
 
 /**
@@ -136,5 +136,39 @@ export const guardedStorage = {
     const backing = rawStorage();
     if (!checkKey(key).allowed) return;
     backing.removeItem(key);
+  },
+};
+
+/**
+ * Sync-scoped sibling of `guardedStorage` that refuses to WRITE a
+ * manifest-declared PII key as plaintext.
+ *
+ * The cross-device sync path is the one surface that used to (re)write the
+ * three vault-backed PII keys (`open3dcalc_history_v2`, `open3dcalc_customers_v1`,
+ * `open3dcalc_quotes_v1`) straight into `localStorage`. After Wave 3 those
+ * records live only in the encrypted vault, so a sync write there is both
+ * wrong (plaintext PII) and useless (the stores do not read it). This wrapper
+ * closes that write at the choke point: a declared `pii:true` key is denied —
+ * loudly in development, safely in production — while every non-PII key is
+ * delegated to `guardedStorage` unchanged. Reads and removes are NOT changed;
+ * the guarantee this layer owes is "no plaintext PII write", not "no read".
+ */
+export const guardedSyncStorage = {
+  getItem(key: string): string | null {
+    return guardedStorage.getItem(key);
+  },
+  setItem(key: string, value: string): void {
+    if (isPiiKey(key)) {
+      const message = `refused plaintext PII write for sync key "${key}"`;
+      console.warn(`[manifestStorage] ${message}`);
+      if (process.env.NODE_ENV !== "production") {
+        throw new ManifestError(message);
+      }
+      return;
+    }
+    guardedStorage.setItem(key, value);
+  },
+  removeItem(key: string): void {
+    guardedStorage.removeItem(key);
   },
 };

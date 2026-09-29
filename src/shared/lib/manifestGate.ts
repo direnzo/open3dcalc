@@ -103,6 +103,20 @@ export function isKeyAllowed(key: string): boolean {
 }
 
 /**
+ * Whether the manifest declares `key` as carrying PII (`pii: true`).
+ *
+ * Non-throwing and fail-closed on an unknown key or an unloadable manifest:
+ * only an entry that positively says `pii: true` returns true. This is the
+ * predicate the sync write guard composes with the key allowlist, so a
+ * declared PII key can never be placed on a plaintext surface while every
+ * non-PII key keeps its current behaviour. Reads the key NAME only.
+ */
+export function isPiiKey(key: string): boolean {
+  const index = ensureLoaded();
+  return index?.get(key)?.pii === true;
+}
+
+/**
  * Whether the manifest ITSELF could not be loaded, so the gate is denying
  * every key (fail-closed).
  *

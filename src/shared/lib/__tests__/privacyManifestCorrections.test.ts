@@ -283,6 +283,55 @@ describe("SPEC-01: the W4.4 value-free progress marker replaces the PII preimage
 });
 
 // ---------------------------------------------------------------------------
+// F5 — the new value-free operational keys are declared and pinned non-PII
+// ---------------------------------------------------------------------------
+
+describe("SPEC-01: the new value-free operational keys are pinned non-PII", () => {
+  it.each([
+    "open3dcalc_legacy_keep_readonly_v1",
+    "open3dcalc_migration_fingerprint_v1",
+  ])("%s is a non-PII plaintext onboarding flag", (key) => {
+    const entry = getEntry(manifest, key);
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({
+      key,
+      surface: "localStorage",
+      platforms: ["electron", "web", "pwa"],
+      class: "onboarding_flag",
+      pii: false,
+      persistence: "plaintext_allowed",
+      sync: "never",
+      export: "never",
+      erasure: "erase_on_delete_all",
+      legal_basis: "not_personal_data",
+      owner: "hermes",
+    });
+  });
+
+  it("keep-read-only declares it stores only a value-free residue signature", () => {
+    const purpose =
+      getEntry(manifest, "open3dcalc_legacy_keep_readonly_v1")?.purpose ?? "";
+    // The decision must be re-askable the moment the residue changes, so only
+    // the residue SIGNATURE (names + counts) may be persisted.
+    expect(purpose).toMatch(/signature/i);
+    expect(purpose).toMatch(/count/i);
+    expect(purpose).toMatch(/never a record|never a value/i);
+  });
+
+  it("drift fingerprint declares it stores only counts", () => {
+    const purpose =
+      getEntry(manifest, "open3dcalc_migration_fingerprint_v1")?.purpose ?? "";
+    expect(purpose).toMatch(/counts?/i);
+    expect(purpose).toMatch(/never a record|never a value/i);
+  });
+
+  it("both keys pass the S1 gate (a real writer must not be a silent no-op)", () => {
+    expect(checkKey("open3dcalc_legacy_keep_readonly_v1").allowed).toBe(true);
+    expect(checkKey("open3dcalc_migration_fingerprint_v1").allowed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Correction 4 — appdata_temp_staging was mis-declared
 // ---------------------------------------------------------------------------
 

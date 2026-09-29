@@ -2,7 +2,9 @@ import { useEffect } from "react";
 import { Header } from "@/shared/components/Header/Header";
 import { DemoModeIndicator } from "@/shared/components/DemoMode/DemoModeIndicator";
 import { DemoExportBlockedToast } from "@/shared/components/DemoMode/DemoExportBlockedToast";
-import { PrivacyBanner } from "@/shared/components/ui/PrivacyBanner";
+import { PrivacyOnboarding } from "@/shared/components/Privacy/PrivacyOnboarding";
+import { LegacyMigrationPrompt } from "@/shared/components/Privacy/LegacyMigrationPrompt";
+import { PiiLockedShell } from "@/shared/components/Privacy/PiiLockedShell";
 import { Tutorial } from "@/shared/components/ui/Tutorial";
 import { AppShell } from "@/shared/components/AppShell/AppShell";
 import { useAppInit } from "@/shared/hooks/useAppInit";
@@ -59,7 +61,9 @@ function AppContent(): React.ReactElement {
       {!focusMode && <Header />}
       <DemoModeIndicator />
       <DemoExportBlockedToast />
-      <PrivacyBanner />
+      <PrivacyOnboarding />
+      <LegacyMigrationPrompt />
+      <PiiLockedShell />
 
       <div className="flex flex-1 w-full max-w-[1600px] 2xl:max-w-[1920px] mx-auto overflow-x-clip">
         <AppShell

@@ -1142,6 +1142,28 @@
       "section8Item4": "You can encrypt bundles with your own password",
       "section8Lgpd": "In compliance with LGPD Art. 18 (right to data portability), you can export your data at any time and import it on another device."
     },
+    "migration": {
+      "title": "Old data in plaintext",
+      "intro": "We found {{count}} personal-data record(s) written in plaintext by older versions. Nothing has been migrated or deleted: choose what to do.",
+      "optionMigrate": "Migrate to the encrypted vault",
+      "optionMigrateHint": "Copies the records into encrypted storage and keeps the plaintext source (nothing is deleted).",
+      "optionKeep": "Keep read-only",
+      "optionKeepHint": "Does not migrate anything now. The legacy data stays in plaintext and remains disclosed on this screen.",
+      "optionExport": "Export my data",
+      "optionExportHint": "Opens the existing export flow. Requires the vault to be unlocked.",
+      "optionDelete": "Eliminate legacy data",
+      "optionDeleteHint": "Destructive action.",
+      "optionCancel": "Not now",
+      "working": "Migrating…",
+      "keptReadOnly": "Nothing was migrated. The legacy data stays in plaintext and remains disclosed on the privacy screen.",
+      "exportBlocked": "The vault is locked. Unlock it with your passphrase to export.",
+      "deleteUnavailable": "Elimination is unavailable in this version: there is no verified erasure for these keys yet. Nothing is deleted silently.",
+      "resultMigrated": "Migration completed and verified. The records are in the encrypted vault; the plaintext source was kept.",
+      "resultVaultLocked": "Migration refused: the vault is locked. Unlock it with your passphrase and try again. Nothing was written.",
+      "resultNothingToMigrate": "Nothing to migrate: there are no recognisable legacy records.",
+      "resultIncomplete": "The migration was neither completed nor verified. Nothing was deleted; please try again.",
+      "close": "Close"
+    },
     "quarantine": {
       "title": "Legacy data quarantine",
       "subtitle": "Personal data written in plaintext by older versions is quarantined: readable, but blocked from new writes until you choose to migrate (encrypt) or eliminate it.",
@@ -1185,6 +1207,57 @@
       "withdraw": "Withdraw consent",
       "withdrawConfirm": "Withdraw consent? Data collected under it will be erased per policy (SPEC-04 §6) and the affected features will be blocked.",
       "flagsNote": "Tutorial, onboarding or banner flags never substitute consent — only the receipt counts (SPEC-04 §2)."
+    },
+    "vault": {
+      "ariaLabel": "Personal data locked",
+      "lockedTitle": "Your personal data is locked",
+      "lockedMessage": "Customers, quotes and history are encrypted and will not load without your passphrase. Nothing was deleted. While the profile is locked, NEW entries will not be saved. Unlock for this session to see them again.",
+      "createTitle": "Set up your profile passphrase",
+      "createMessage": "This profile has no passphrase yet. Choose one to encrypt customers, quotes and history on this device. It is never stored and never leaves this session.",
+      "passphraseLabel": "Profile passphrase",
+      "passphrasePlaceholder": "Enter passphrase",
+      "createPassphrasePlaceholder": "Create a passphrase",
+      "confirmPassphraseLabel": "Confirm passphrase",
+      "confirmPassphrasePlaceholder": "Repeat passphrase",
+      "create": "Create and unlock",
+      "creating": "Creating…",
+      "mismatchError": "The two passphrases do not match.",
+      "irrecoverableNotice": "There is no reset: if you forget this passphrase, this profile's data cannot be recovered.",
+      "unlock": "Unlock",
+      "unlocking": "Unlocking…",
+      "memoryNote": "The passphrase stays only in this session's memory and is never stored.",
+      "unlockError": "Could not unlock.",
+      "unlockErrorDetail": "Reason: {{reason}}",
+      "unavailableTitle": "Personal data unavailable in this environment",
+      "unavailableMessage": "This environment cannot protect personal data (no encryption or secure storage), so customers, quotes and history are neither shown nor written. Nothing was deleted. NEW entries will not be saved here.",
+      "unavailableDetail": "Reason: {{reason}}",
+      "writeRefusedTitle": "New entries were not saved",
+      "writeRefusedMessage": "Could not save to {{area}}: the profile is locked or data protection is unavailable ({{reason}}). The entry was NOT saved and will be lost when you reload. Unlock the profile to save.",
+      "writeRefusedAreaUnknown": "personal data"
+    },
+    "residue": {
+      "title": "Legacy plaintext data",
+      "subtitle": "Transparency about the personal-data residue that older versions wrote in plaintext, the encrypted vault state, and the migration state. Only key names and counts are shown — never values.",
+      "residueHeading": "Plaintext residue",
+      "residueNone": "No plaintext residue found under the three legacy keys.",
+      "residueTotal": "{{count}} plaintext record(s) in total.",
+      "residueKey": "{{key}} · {{count}} record(s)",
+      "residueKeptNote": "The plaintext is never deleted automatically: the keys above stay in local storage until an explicit elimination.",
+      "vaultHeading": "Encrypted vault state",
+      "vaultHydrated": "Unlocked and hydrated",
+      "vaultLocked": "Locked — enter your passphrase to access",
+      "vaultUnavailable": "Unavailable in this environment",
+      "vaultUnavailableDetail": "Reason: {{reason}}",
+      "rehomeHeading": "Vault re-home",
+      "rehomeMigrated": "Migrated to the encrypted vault (or nothing to migrate)",
+      "rehomePending": "Pending — plaintext residue has not been re-homed yet",
+      "rehomeIncomplete": "Incomplete — a previous migration was interrupted",
+      "historyHeading": "History migration marker",
+      "historyAbsent": "Absent",
+      "historyComplete": "Complete",
+      "historyResumable": "Resumable — an interrupted migration can be resumed",
+      "markerNote": "Marker key: {{key}}",
+      "valueFreeNote": "This panel is informational and value-free: it shows only key names, counts and states."
     }
   },
   "tooltip": {
@@ -2211,7 +2284,8 @@
       "passwordPlaceholder": "Enter a password (optional)",
       "button": "Export Data",
       "success": "Data exported successfully",
-      "downloading": "Preparing download..."
+      "downloading": "Preparing download...",
+      "piiExcluded": "Customers, quotes and history were NOT included: they are protected by the encrypted vault and were unavailable at export time. Unlock the vault and export again to include them."
     },
     "import": {
       "tab": "Import",
@@ -2233,6 +2307,7 @@
       "importing": "Importing data...",
       "invalidFile": "Invalid or corrupted file",
       "wrongPassword": "Wrong password",
+      "piiRefused": "Customers, quotes and history were NOT imported: the encrypted vault was locked or unavailable. Unlock the vault and import again; nothing was written in plaintext.",
       "results": {
         "imported": "{{count}} items imported",
         "conflicts": "{{count}} conflicts resolved",
@@ -2475,5 +2550,35 @@
     "openSource": "Open Source · MIT License",
     "github": "GitHub",
     "telegram": "Telegram Channel"
+  },
+
+  "persistence": {
+    "bridge": {
+      "startupAriaLabel": "Could not open local storage",
+      "startupTitle": "Local storage could not be opened",
+      "startupMessage": "The app did not start because the persistence layer refused the operation. Nothing was deleted: your data is still where it was and you can close the app safely.",
+      "startupDetail": "Reason reported by the persistence layer: {{reason}}",
+      "retry": "Try again",
+      "runtimeAriaLabel": "Local storage unavailable",
+      "runtimeTitle": "Your changes are not being saved",
+      "dismiss": "Dismiss"
+    },
+    "recovery": {
+      "ariaLabel": "Some stored data could not be opened",
+      "title": "Some of your data could not be opened",
+      "message": "These parts of your profile are stored but could not be decrypted, so they are not shown right now. Nothing was deleted — the data is still on disk, and the rest of your profile is working normally.",
+      "detail": "Unavailable: {{reason}}",
+      "recoverable": "Can be recovered",
+      "unrecoverable": "Cannot be recovered",
+      "recoverAction": "Recover now",
+      "recovered": "Recovered and verified. The original copy was kept as a backup.",
+      "recoverFailed": "Could not recover this data. Nothing was changed and the original copy is untouched."
+    },
+    "manifestUnavailable": {
+      "ariaLabel": "Saved data unavailable",
+      "title": "Your saved data is unavailable",
+      "message": "The app could not read the data classification manifest, so none of your saved profile can be opened right now. Nothing is being written or deleted — your data is still on disk and will return when the manifest is available again.",
+      "detail": "Reason: {{reason}}"
+    }
   }
 }

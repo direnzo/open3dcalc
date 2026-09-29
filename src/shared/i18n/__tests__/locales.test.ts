@@ -598,6 +598,213 @@ describe("i18n locales — multi-material disabled explanation", () => {
   });
 });
 
+/**
+ * T3.3 — the locked shell / unlock surface. Every string it renders goes
+ * through `t("privacy.vault.*")`; a missing key would render the raw key on the
+ * one control that stands between a locked user and an empty-looking app.
+ * The two `*Detail` strings are interpolated, so their placeholder is asserted
+ * rather than the literal, in both locales.
+ */
+const VAULT_KEYS = [
+  "ariaLabel",
+  "lockedTitle",
+  "lockedMessage",
+  // MEDIUM-1 — create mode: a new profile has no passphrase yet, so the shell
+  // asks for it twice and warns that it cannot be reset.
+  "createTitle",
+  "createMessage",
+  "passphraseLabel",
+  "passphrasePlaceholder",
+  "createPassphrasePlaceholder",
+  "confirmPassphraseLabel",
+  "confirmPassphrasePlaceholder",
+  "create",
+  "creating",
+  "mismatchError",
+  "irrecoverableNotice",
+  "unlock",
+  "unlocking",
+  "memoryNote",
+  "unlockError",
+  "unavailableTitle",
+  "unavailableMessage",
+  // H-4 — the write-refusal consumer. A missing key would render the raw key
+  // on the surface that exists precisely to make a refused PII write visible.
+  "writeRefusedTitle",
+  "writeRefusedAreaUnknown",
+] as const;
+
+const VAULT_DETAIL_KEYS = [
+  "unlockErrorDetail",
+  "unavailableDetail",
+  "writeRefusedMessage",
+] as const;
+
+/**
+ * T5.2 — the legacy-migration choice dialog. Every string it renders goes
+ * through `t("privacy.migration.*")`. The `intro` is interpolated, so its
+ * placeholder is asserted rather than the literal. The key sets are compared
+ * for EXACT parity, because a key present in only one locale renders as a raw
+ * key for every user of that locale.
+ */
+const MIGRATION_KEYS = [
+  "title",
+  "intro",
+  "optionMigrate",
+  "optionMigrateHint",
+  "optionKeep",
+  "optionKeepHint",
+  "optionExport",
+  "optionExportHint",
+  "optionDelete",
+  "optionDeleteHint",
+  "optionCancel",
+  "working",
+  "keptReadOnly",
+  "exportBlocked",
+  "deleteUnavailable",
+  "resultMigrated",
+  "resultVaultLocked",
+  "resultNothingToMigrate",
+  "resultIncomplete",
+  "close",
+] as const;
+
+describe("i18n locales (privacy.migration.*) — T5.2 choice dialog", () => {
+  it.each([
+    ["pt-BR", ptBR],
+    ["en-US", enUS],
+  ])("resolves every privacy.migration.* key in %s", (_locale, dict) => {
+    for (const key of MIGRATION_KEYS) {
+      const value = resolve(dict, ["privacy", "migration", key]);
+      expect(typeof value, `privacy.migration.${key}`).toBe("string");
+      expect((value as string).length).toBeGreaterThan(0);
+    }
+    const intro = resolve(dict, ["privacy", "migration", "intro"]);
+    expect(intro as string, "privacy.migration.intro").toContain("{{count}}");
+  });
+
+  it("keeps exact key parity between pt-BR and en-US", () => {
+    const ptKeys = Object.keys(
+      resolve(ptBR, ["privacy", "migration"]) as Record<string, unknown>,
+    ).sort();
+    const enKeys = Object.keys(
+      resolve(enUS, ["privacy", "migration"]) as Record<string, unknown>,
+    ).sort();
+    expect(ptKeys).toEqual(enKeys);
+    expect(ptKeys).toEqual([...MIGRATION_KEYS].sort());
+  });
+});
+
+/**
+ * T5.3 — the legacy-residue disclosure panel. Every string it renders goes
+ * through `t("privacy.residue.*")`. The interpolated rows carry placeholders,
+ * so those are asserted rather than the literal, and the key sets are compared
+ * for EXACT parity because a key present in only one locale renders as a raw
+ * key for every user of that locale.
+ */
+const RESIDUE_KEYS = [
+  "title",
+  "subtitle",
+  "residueHeading",
+  "residueNone",
+  "residueTotal",
+  "residueKey",
+  "residueKeptNote",
+  "vaultHeading",
+  "vaultHydrated",
+  "vaultLocked",
+  "vaultUnavailable",
+  "vaultUnavailableDetail",
+  "rehomeHeading",
+  "rehomeMigrated",
+  "rehomePending",
+  "rehomeIncomplete",
+  "historyHeading",
+  "historyAbsent",
+  "historyComplete",
+  "historyResumable",
+  "markerNote",
+  "valueFreeNote",
+] as const;
+
+const RESIDUE_PLACEHOLDERS: Record<string, readonly string[]> = {
+  residueTotal: ["{{count}}"],
+  residueKey: ["{{key}}", "{{count}}"],
+  vaultUnavailableDetail: ["{{reason}}"],
+  markerNote: ["{{key}}"],
+};
+
+describe("i18n locales (privacy.residue.*) — T5.3 residue disclosure", () => {
+  it.each([
+    ["pt-BR", ptBR],
+    ["en-US", enUS],
+  ])("resolves every privacy.residue.* key in %s", (_locale, dict) => {
+    for (const key of RESIDUE_KEYS) {
+      const value = resolve(dict, ["privacy", "residue", key]);
+      expect(typeof value, `privacy.residue.${key}`).toBe("string");
+      expect((value as string).length).toBeGreaterThan(0);
+    }
+    for (const [key, placeholders] of Object.entries(RESIDUE_PLACEHOLDERS)) {
+      const value = resolve(dict, ["privacy", "residue", key]) as string;
+      for (const placeholder of placeholders) {
+        expect(
+          value,
+          `privacy.residue.${key} must keep ${placeholder}`,
+        ).toContain(placeholder);
+      }
+    }
+  });
+
+  it("keeps exact key parity between pt-BR and en-US", () => {
+    const ptKeys = Object.keys(
+      resolve(ptBR, ["privacy", "residue"]) as Record<string, unknown>,
+    ).sort();
+    const enKeys = Object.keys(
+      resolve(enUS, ["privacy", "residue"]) as Record<string, unknown>,
+    ).sort();
+    expect(ptKeys).toEqual(enKeys);
+    expect(ptKeys).toEqual([...RESIDUE_KEYS].sort());
+  });
+});
+
+describe("i18n locales (privacy.vault.*) — T3.3 locked shell", () => {
+  it.each([
+    ["pt-BR", ptBR],
+    ["en-US", enUS],
+  ])("resolves every privacy.vault.* key in %s", (_locale, dict) => {
+    for (const key of VAULT_KEYS) {
+      const value = resolve(dict, ["privacy", "vault", key]);
+      expect(typeof value, `privacy.vault.${key}`).toBe("string");
+      expect((value as string).length).toBeGreaterThan(0);
+    }
+    for (const key of VAULT_DETAIL_KEYS) {
+      const value = resolve(dict, ["privacy", "vault", key]);
+      expect(typeof value, `privacy.vault.${key}`).toBe("string");
+      expect(value as string, `privacy.vault.${key}`).toContain("{{reason}}");
+    }
+    // The write-refusal message names the affected data area as well as the
+    // typed reason; dropping the placeholder would render literal "{{area}}".
+    const refusedMessage = resolve(dict, [
+      "privacy",
+      "vault",
+      "writeRefusedMessage",
+    ]) as string;
+    expect(refusedMessage, "privacy.vault.writeRefusedMessage").toContain(
+      "{{area}}",
+    );
+  });
+
+  it("has no orphan privacy.vault keys in either locale", () => {
+    const expected = [...VAULT_KEYS, ...VAULT_DETAIL_KEYS].sort();
+    for (const dict of [ptBR, enUS]) {
+      const vault = resolve(dict, ["privacy", "vault"]) as
+        Record<string, unknown> | undefined;
+      expect(Object.keys(vault ?? {}).sort()).toEqual(expected);
+    }
+  });
+});
+
 describe("i18n locales — no hardcoded currency symbol (R$) in en-US", () => {
   it("en-US labels never hardcode R$; the symbol comes from useCurrency()", () => {
     const all: { key: string; value: string }[] = [];

@@ -33,6 +33,11 @@ import {
   type RendererPurgeReport,
 } from "./erasureStores.js";
 import { getDbPath } from "../db/database.js";
+import {
+  snapshotPayload,
+  restoreSnapshotPayload,
+  type PayloadDb,
+} from "./erasurePayload.js";
 
 export function erasureDir(): string {
   return path.join(app.getPath("userData"), "erasure");
@@ -62,71 +67,8 @@ export function safeStorageSnapshotCapability(): SnapshotCapability {
   };
 }
 
-function snapshotPayload(db: {
-  $client: {
-    prepare(sql: string): {
-      get(...p: unknown[]): unknown;
-      all(...p: unknown[]): unknown[];
-    };
-  };
-}): string {
-  const rows = db.$client
-    .prepare("SELECT key, value FROM storage")
-    .all() as Array<{ key: string; value: string }>;
-  const domain: Record<string, unknown[]> = {};
-  for (const table of ["customers", "quotes", "quote_items"]) {
-    try {
-      domain[table] = db.$client
-        .prepare(`SELECT * FROM ${table}`)
-        .all() as unknown[];
-    } catch {
-      domain[table] = [];
-    }
-  }
-  return JSON.stringify({ storage: rows, domain });
-}
-
-function restoreSnapshotPayload(
-  db: { $client: { prepare(sql: string): { run(...p: unknown[]): unknown } } },
-  payload: string,
-): void {
-  const parsed = JSON.parse(payload) as {
-    storage: Array<{ key: string; value: string }>;
-    domain: Record<string, Array<Record<string, unknown>>>;
-  };
-  db.$client.prepare("DELETE FROM storage").run();
-  const insertStorage = db.$client.prepare(
-    "INSERT INTO storage (key, value, updated_at) VALUES (?, ?, ?)",
-  );
-  for (const row of parsed.storage) {
-    insertStorage.run(row.key, row.value, Date.now());
-  }
-  for (const [table, rows] of Object.entries(parsed.domain)) {
-    // Rows are restored verbatim into their origin tables (column sets are
-    // unchanged — the payload was captured moments earlier).
-    for (const row of rows) {
-      const columns = Object.keys(row);
-      if (columns.length === 0) continue;
-      const placeholders = columns.map(() => "?").join(", ");
-      db.$client
-        .prepare(
-          `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders})`,
-        )
-        .run(...columns.map((c) => (row as Record<string, unknown>)[c]));
-    }
-  }
-}
-
 function buildAdapters(
-  db: {
-    $client: {
-      prepare(sql: string): {
-        get(...p: unknown[]): unknown;
-        run(...p: unknown[]): unknown;
-        all(...p: unknown[]): unknown[];
-      };
-    };
-  },
+  db: PayloadDb,
   rendererReport: RendererPurgeReport | undefined,
 ): SagaEngineOptions["adapters"] {
   const dbPath = getDbPath();

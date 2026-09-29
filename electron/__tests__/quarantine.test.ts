@@ -7,17 +7,36 @@
  * real SQLite file, no mocks).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+/**
+ * Since Wave 2 the `safeStorage` branch needs a real OS keyring AND somewhere
+ * to keep the wrapped profile data key, so the `electron` mock stands in for
+ * the whole main-process surface the layer touches. See the same seam in
+ * `persistGate.test.ts`.
+ */
 const hoisted = vi.hoisted(() => ({
+  userDataDir: { value: "" },
   mockSafeStorage: {
     isEncryptionAvailable: vi.fn<[], boolean>(() => true),
-    encryptString: vi.fn<[], Buffer>(),
-    decryptString: vi.fn<[], string>(),
+    encryptString: vi.fn<[string], Buffer>(),
+    decryptString: vi.fn<[Buffer], string>(),
+    getSelectedStorageBackend: vi.fn<[], string>(() => "gnome_libsecret"),
   },
 }));
 
-vi.mock("electron", () => ({ safeStorage: hoisted.mockSafeStorage }));
+vi.mock("electron", () => ({
+  safeStorage: hoisted.mockSafeStorage,
+  app: {
+    getPath: (name: string) => {
+      if (name === "userData") return hoisted.userDataDir.value;
+      throw new Error(`unexpected path request: ${name}`);
+    },
+  },
+}));
 
 import {
   buildQuarantineReport,
@@ -26,6 +45,7 @@ import {
   readStoredRow,
 } from "../quarantine.js";
 import { saveGated } from "../persistGate.js";
+import { resetProfileDataKeyForTests } from "../profileDataKey.js";
 import {
   setSessionPassphrase,
   zeroizeSessionPassphrase,
@@ -86,6 +106,11 @@ function withAll(db: ReturnType<typeof makeDb>) {
 
 beforeEach(() => {
   zeroizeSessionPassphrase();
+  // A fresh profile per spec: the wrapped data key is cached in process memory
+  // and persisted per `userData`, so a shared directory would let one spec's
+  // key silently satisfy another's.
+  hoisted.userDataDir.value = mkdtempSync(join(tmpdir(), "o3dc-quar-"));
+  resetProfileDataKeyForTests();
   vi.clearAllMocks();
   hoisted.mockSafeStorage.isEncryptionAvailable.mockReturnValue(true);
   hoisted.mockSafeStorage.encryptString.mockImplementation((s: string) =>
@@ -94,6 +119,14 @@ beforeEach(() => {
   hoisted.mockSafeStorage.decryptString.mockImplementation((b: Buffer) =>
     Buffer.from(b).toString("utf8").slice(5),
   );
+  hoisted.mockSafeStorage.getSelectedStorageBackend.mockReturnValue(
+    "gnome_libsecret",
+  );
+});
+
+afterEach(() => {
+  resetProfileDataKeyForTests();
+  rmSync(hoisted.userDataDir.value, { recursive: true, force: true });
 });
 
 describe("buildQuarantineReport (state derived from the scan)", () => {

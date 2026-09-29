@@ -12,6 +12,10 @@
  * 2. `guardedStorage` — a `localStorage`-shaped object for the handful of
  *    stores that call `localStorage` directly. Same API, gate-checked.
  *
+ * The PII vault's capability gate lives next door, in
+ * `crypto/piiStoreCapability.ts`; only the demo flag below is mirrored into
+ * it, so there is still one switch and one decision for "may PII be written?".
+ *
  * Gate semantics (see manifestGate): known keys pass through untouched;
  * unknown keys throw in dev and deny-safely in production. Values are never
  * logged — only key names (TEST-MATRIX 3.2).
@@ -22,7 +26,8 @@ import {
   type PersistStorage,
   type StateStorage,
 } from "zustand/middleware";
-import { checkKey } from "./manifestGate";
+import { checkKey, isPiiKey, ManifestError } from "./manifestGate.js";
+import { setDemoSuppressedForPiiGate } from "./crypto/piiStoreCapability.js";
 
 /**
  * Ephemeral demo-data mode (onboarding Fase 0).
@@ -37,9 +42,24 @@ import { checkKey } from "./manifestGate";
  */
 let demoPersistenceSuppressed = false;
 
-/** Engage/release write suppression. Called only by demoModeStore. */
+/**
+ * Engage/release write suppression. Called only by demoModeStore.
+ *
+ * The flag is ALSO mirrored into the PII gate's decision state, so a demo
+ * session suppresses the encrypted vault through the same single switch this
+ * module already owns. Two independent predicates would be two choke points: a
+ * demo session would stop localStorage writes while still sealing PII into
+ * IndexedDB, and a demo session is defined as holding nothing at all. A mirror
+ * of one boolean cannot drift the way two separately-owned predicates can.
+ *
+ * The gate's own state lives in `crypto/piiStoreCapability.ts` rather than
+ * here because the Electron main process compiles that directory with no DOM,
+ * and a vault reaching into a zustand-and-`window` module would drag a
+ * renderer dependency into the main bundle.
+ */
 export function setDemoPersistenceSuppressed(value: boolean): void {
   demoPersistenceSuppressed = value;
+  setDemoSuppressedForPiiGate(value);
 }
 
 /** True while a demo session owns the stores (writes are no-ops). */
@@ -116,5 +136,39 @@ export const guardedStorage = {
     const backing = rawStorage();
     if (!checkKey(key).allowed) return;
     backing.removeItem(key);
+  },
+};
+
+/**
+ * Sync-scoped sibling of `guardedStorage` that refuses to WRITE a
+ * manifest-declared PII key as plaintext.
+ *
+ * The cross-device sync path is the one surface that used to (re)write the
+ * three vault-backed PII keys (`open3dcalc_history_v2`, `open3dcalc_customers_v1`,
+ * `open3dcalc_quotes_v1`) straight into `localStorage`. After Wave 3 those
+ * records live only in the encrypted vault, so a sync write there is both
+ * wrong (plaintext PII) and useless (the stores do not read it). This wrapper
+ * closes that write at the choke point: a declared `pii:true` key is denied —
+ * loudly in development, safely in production — while every non-PII key is
+ * delegated to `guardedStorage` unchanged. Reads and removes are NOT changed;
+ * the guarantee this layer owes is "no plaintext PII write", not "no read".
+ */
+export const guardedSyncStorage = {
+  getItem(key: string): string | null {
+    return guardedStorage.getItem(key);
+  },
+  setItem(key: string, value: string): void {
+    if (isPiiKey(key)) {
+      const message = `refused plaintext PII write for sync key "${key}"`;
+      console.warn(`[manifestStorage] ${message}`);
+      if (process.env.NODE_ENV !== "production") {
+        throw new ManifestError(message);
+      }
+      return;
+    }
+    guardedStorage.setItem(key, value);
+  },
+  removeItem(key: string): void {
+    guardedStorage.removeItem(key);
   },
 };

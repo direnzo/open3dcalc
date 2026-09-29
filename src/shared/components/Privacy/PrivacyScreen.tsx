@@ -7,6 +7,7 @@ import {
   Trash2,
   AlertCircle,
 } from "lucide-react";
+import { LegacyResidueDisclosure } from "@/shared/components/Privacy/LegacyResidueDisclosure";
 
 /**
  * Privacy screen (D1.1 S4) — ADR-002 §2.2.4.
@@ -238,7 +239,7 @@ export function PrivacyScreen() {
 
   if (!privacyApi) {
     return (
-      <div className="p-4 sm:p-6 max-w-3xl mx-auto w-full">
+      <div className="p-4 sm:p-6 max-w-3xl mx-auto w-full space-y-4">
         <div className="surface rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
           <div>
@@ -250,6 +251,8 @@ export function PrivacyScreen() {
             </p>
           </div>
         </div>
+        {/* T5.3 — the browser residue exists on web too: disclose it here. */}
+        <LegacyResidueDisclosure />
       </div>
     );
   }
@@ -393,37 +396,52 @@ export function PrivacyScreen() {
         {t("privacy.quarantine.readNote")}
       </p>
 
+      {/* ── T5.3 legacy residue + vault/marker disclosure ────────────── */}
+      <LegacyResidueDisclosure />
+
       {/* ── SPEC-04 consent receipt ─────────────────────────────────── */}
+      {/* Every string below reads `privacy.consent_receipt.*`, NOT
+          `privacy.consent.*`. The two namespaces both exist and both are
+          translated, and they are DIFFERENT screens: `privacy.consent.*` is
+          the first-run ConsentModal (its `title` is literally "Your Data
+          Privacy"). Asking it for a receipt string resolves to nothing and
+          renders the raw key — which is what these six call sites did, in both
+          locales, with a complete pt-BR translation already sitting one
+          namespace over. The heading was wrong the same way, more quietly: it
+          resolved, so it rendered the ConsentModal's heading over a
+          consent-RECEIPT panel. Repointed, not duplicated. */}
       <div className="surface rounded-xl p-4 space-y-3">
         <h3 className="text-sm font-bold text-[var(--color-text-primary)]">
-          {t("privacy.consent.title")}
+          {t("privacy.consent_receipt.title")}
         </h3>
         {consentStatus === null ? (
           <p className="text-xs text-[var(--color-text-muted)]">…</p>
         ) : consentStatus.consentGiven ? (
           <div className="space-y-2">
             <p className="text-xs text-emerald-400">
-              {t("privacy.consent.granted", {
+              {t("privacy.consent_receipt.granted", {
                 version: consentStatus.currentPolicyVersion,
               })}
             </p>
             <button
               type="button"
               onClick={() => {
-                if (window.confirm(t("privacy.consent.withdrawConfirm"))) {
+                if (
+                  window.confirm(t("privacy.consent_receipt.withdrawConfirm"))
+                ) {
                   void handleWithdraw();
                 }
               }}
               disabled={consentBusy}
               className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold bg-[var(--color-bg-elevated)] text-red-400 hover:bg-[var(--color-bg-hover)] border border-red-500/30 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none disabled:opacity-60"
             >
-              {t("privacy.consent.withdraw")}
+              {t("privacy.consent_receipt.withdraw")}
             </button>
           </div>
         ) : (
           <div className="space-y-2">
             <p className="text-xs text-[var(--color-text-secondary)]">
-              {t("privacy.consent.absent")}
+              {t("privacy.consent_receipt.absent")}
             </p>
             <button
               type="button"
@@ -431,12 +449,12 @@ export function PrivacyScreen() {
               disabled={consentBusy}
               className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-semibold bg-[var(--accent-fill)] text-white hover:bg-[var(--accent-fill-hover)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none disabled:opacity-60"
             >
-              {t("privacy.consent.grant")}
+              {t("privacy.consent_receipt.grant")}
             </button>
           </div>
         )}
         <p className="text-[11px] text-[var(--color-text-muted)]">
-          {t("privacy.consent.flagsNote")}
+          {t("privacy.consent_receipt.flagsNote")}
         </p>
       </div>
 

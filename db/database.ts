@@ -209,7 +209,39 @@ const TABLE_CREATE_RE =
   /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?/gi;
 
 /**
- * Returns the table names declared by the current SQL migration files.
+ * Tables a `db:import` candidate is NOT required to carry, because the
+ * migration runner creates them itself on the very next line of the import.
+ *
+ * `pii_stage` (migration 0004) and `legacy_residue` (migration 0005) are the
+ * entries, and both are exempt on purpose:
+ *
+ *  - The check cannot prevent a bad swap. `db:import` validates a temp copy,
+ *    swaps it in, and then calls `initDatabase()`, which re-runs `runMigrations`
+ *    against the swapped file. Requiring the table in the candidate buys no
+ *    safety the runner does not already provide.
+ *  - Rejecting it would remove recoverability exactly where it is needed: the
+ *    files that lack these tables are pre-remediation backups — the users this
+ *    work is protecting — and `db:import` is how they get their data back.
+ *  - `requiredTables()` is a legitimacy test on the user's DATA schema, not a
+ *    "is this the newest migration" test. Both tables are created EMPTY by
+ *    their own migration and hold no user data at import time (`pii_stage` is a
+ *    transient re-homing staging table; `legacy_residue` only ever receives a
+ *    row when the §3.6 recovery runs, which cannot have happened in a file that
+ *    predates 0005). A file without them is still unambiguously one of ours.
+ *
+ * Adding to this set is a behaviour change to data recovery, so it is a named
+ * constant rather than an inferred rule, and `db/__tests__/pii-stage-migration.test.ts`
+ * pins both halves: a 0000-0003 and a 0000-0004 file are accepted, and a file
+ * missing any real table is still refused.
+ */
+const IMPORT_EXEMPT_TABLES: ReadonlySet<string> = new Set([
+  "pii_stage",
+  "legacy_residue",
+]);
+
+/**
+ * Returns the table names declared by the current SQL migration files, minus
+ * the ones `IMPORT_EXEMPT_TABLES` excuses from `db:import` validation.
  */
 function requiredTables(): string[] {
   const migrationsDir = resolveMigrationsDir();
@@ -225,7 +257,7 @@ function requiredTables(): string[] {
       tables.add(match[1]);
     }
   }
-  return [...tables];
+  return [...tables].filter((table) => !IMPORT_EXEMPT_TABLES.has(table));
 }
 
 /**

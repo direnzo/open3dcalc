@@ -56,8 +56,11 @@ O Open3DCalc é **local-first**: seus dados vivem no seu dispositivo e nada é e
   - **Apagar todos os meus dados**: apagamento completo e verificável em todas as superfícies (banco, arquivos, caches, backups internos), com journal recuperável, snapshot criptografado de reversão (7 dias) e recibo listando as cópias externas que o app não alcança (ex.: exports salvos fora do app).
 - **Exportação sempre criptografada**: o pacote de sincronização/exportação (`.open3dcalc`) sai criptografado com AES-256-GCM a partir de uma senha sua — sem senha, não há export. Pacotes legados antigos continuam importáveis. Os dados marcados como exportáveis pelo usuário — incluindo paleta de cores personalizada e configurações de comparação de modelos — são preservados na exportação e importação.
 - **Backup bruto deixou de ser recurso de usuário**: a cópia bruta do banco SQLite agora é um artefato de diagnóstico interno, bloqueado por padrão (gate de desenvolvimento), com modo de redação de dados pessoais e retenção máxima de 14 dias. Para levar seus dados a outra máquina, use o pacote de exportação criptografado.
+- **Cofre de PII no navegador (fundação pronta, migração ainda não)**: o build web ganhou um destino cifrado para dados pessoais — um IndexedDB (`open3dcalc_pii_vault`) onde cada registro é um envelope AES-256-GCM selado com o mesmo contrato de dados vinculados (AAD) do build desktop, sob uma chave derivada de senha que existe **somente em memória** (não exportável, descartada ao travar). **Não há caminho de texto puro.** Se o perfil estiver travado, se Web Crypto ou IndexedDB não existirem, se o contexto não for seguro, ou se você tiver recusado, o cofre **recusa** a leitura e a gravação com um motivo explícito e tipado — ele não devolve lista vazia, porque uma leitura vazia deixaria o store persistir seu estado inicial (lista vazia) por cima dos seus dados reais, o que é perda de dados disfarçada de cadeado. Os três stores Zustand (`open3dcalc_customers_v1`, `open3dcalc_quotes_v1`, `open3dcalc_history_v2`) **ainda não** foram migrados para o cofre, e ainda não existe tela de desbloqueio no app web: por isso, migrá-los vai exigir `skipHydration` e um `rehydrate()` explícito depois do desbloqueio. A superfície está declarada no manifesto como `sync: never` e `export: never`, de modo que a exportação e a sincronização não conseguem alcançá-la.
 
 > Detalhes técnicos: `docs/privacy/` (SPEC-01 manifest de dados, ADR-001 capacidade criptográfica, ADR-002 quarentena, ADR-003 export vs backup, SPEC-02 saga de apagamento, SPEC-03 envelope de exportação, SPEC-04 recibo de consentimento).
+>
+> 📦 **Beta 5 (web):** evidências de release e a disclosure obrigatória estão em [`docs/privacy/BETA5-RELEASE-EVIDENCE.md`](docs/privacy/BETA5-RELEASE-EVIDENCE.md).
 
 ---
 
@@ -551,6 +554,9 @@ O canal beta publica builds **web-only** (Electron nunca é buildado) num subpat
    - Builda a web com `VITE_BETA_CHANNEL=true` (selo visual de beta)
    - Publica em `gh-pages/beta/` sem tocar na raiz estáável (`keep_files: true`)
    - Cria (ou atualiza) a GitHub Release **prerelease** `Beta vX.Y.Z-beta.N`
+
+> 🧾 **Bloqueio por disclosure:** antes de autorizar o corte, o pacote de evidências de release e o
+> checklist do gate devem estar verdes — veja [`docs/privacy/BETA5-RELEASE-EVIDENCE.md`](docs/privacy/BETA5-RELEASE-EVIDENCE.md).
 
 As tags beta são **imutáveis**: nunca reescreva ou delete uma tag já publicada — corte uma nova beta (`beta.N+1`) caso precise ajustar algo. O `beta-deploy.yml` é idempotente, então re-executá-lo na mesma tag apenas refresca a release.
 

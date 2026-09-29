@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0",
-  "policy_version": "1.4",
+  "policy_version": "1.8",
   "keys": [
     {
       "key": "open3dcalc_consent_v1",
@@ -44,9 +44,9 @@
       "key": "open3dcalc_migration_done_v2",
       "surface": "localStorage",
       "platforms": ["electron", "web", "pwa"],
-      "class": "onboarding_flag",
-      "pii": false,
-      "persistence": "plaintext_allowed",
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
       "sync": "never",
       "export": "never",
       "erasure": "erase_on_delete_all",
@@ -54,10 +54,10 @@
         "policy": "user_controlled",
         "max_days": 0
       },
-      "purpose": "One-shot marker for the v2 localStorage-to-SQLite migration so it runs once; local-only. Key renamed from the D1.0 fixture to match the shipped code.",
-      "legal_basis": "not_personal_data",
+      "purpose": "Legacy compatibility input for the v2 history migration: its value embeds the full raw pre-migration history array (baseEntries) so an interrupted migration can be resumed, making it PII-bearing despite its marker-like name. Never synced or exported.",
+      "legal_basis": "consent",
       "owner": "hermes",
-      "version": "1.1"
+      "version": "1.2"
     },
     {
       "key": "open3dcalc_quickstart_dismissed",
@@ -136,6 +136,25 @@
       "version": "1.0"
     },
     {
+      "key": "open3dcalc_pii_vault",
+      "surface": "indexeddb",
+      "platforms": ["web", "pwa"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "never",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Encrypted browser store for the three PII keys (open3dcalc_customers_v1, open3dcalc_quotes_v1, open3dcalc_history_v2) as they are migrated off plaintext localStorage. ONE IndexedDB database holding one record per logical storage key; each record is a Wave 1 v2 AES-256-GCM envelope (PBKDF2-SHA256 @310,000) whose AAD binds the key name, purpose, schemaVersion and envelopeFormatVersion, sealed under a passphrase-derived key held only in memory and non-extractable. There is no plaintext fallback: the gate in manifestStorage refuses a read or a write when the profile is locked, when Web Crypto or IndexedDB is absent, in an insecure context, or when the user has declined. NEVER SYNCED AND NEVER EXPORTED: dataSync.ts reads a fixed list of localStorage key literals and never enumerates a store, so this surface is unreachable from the sync/export path by construction (pinned by piiVaultDeclaration.test.ts). The records hold the same customers/quotes/history the legacy localStorage keys held, so retention is user_controlled with no ceiling - and NO TTL SWEEPER exists, so nothing expires them on a timer. Without the passphrase the records are unreadable, which is a property of the key and NOT retention; the bytes persist until the user erases or deletes the data. Covered by the SPEC-02 IndexedDB sweep (indexeddbAdapter().purge() deletes the database wholesale).",
+      "legal_basis": "consent",
+      "owner": "hermes",
+      "version": "1.0"
+    },
+    {
       "key": "customers",
       "surface": "sqlite_domain_tables",
       "platforms": ["electron"],
@@ -188,6 +207,82 @@
         "max_days": 0
       },
       "purpose": "Normalized quote records (with customerSnapshot JSON) in the desktop database.",
+      "legal_basis": "consent",
+      "owner": "demeter",
+      "version": "1.0"
+    },
+    {
+      "key": "quote_items",
+      "surface": "sqlite_domain_tables",
+      "platforms": ["electron"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "user_export",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Normalized quote line items in the desktop database; PII-bearing because each row carries a free-text item name and a history_entry_id link to a PII-bearing history entry.",
+      "legal_basis": "consent",
+      "owner": "demeter",
+      "version": "1.0"
+    },
+    {
+      "key": "history_entries",
+      "surface": "sqlite_domain_tables",
+      "platforms": ["electron"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "user_export",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Normalized saved calculation results in the desktop database; PII-bearing because each row carries a free-text name plus resultJson (the whole CalculationResult) and snapshotJson (every calculator input).",
+      "legal_basis": "consent",
+      "owner": "demeter",
+      "version": "1.0"
+    },
+    {
+      "key": "pii_stage",
+      "surface": "sqlite_domain_tables",
+      "platforms": ["electron"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "diagnostic_only",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "session_only",
+        "max_days": 1
+      },
+      "purpose": "Staging table for re-homing a PII value between storage layouts (Beta5 Wave 1, migration 0004_pii_stage.sql): one row is the SEALED (enc1:…) preimage of one value, beside the AAD components it is bound to (privacy_epoch, schema_version, envelope_version) and the state/generation of the transaction that owns it. PII-bearing because the preimage IS the user's value, sealed — it is never plaintext. A dedicated table rather than a `storage` row because the 10 s persistence-bridge sweep deletes every storage key the renderer does not have, and the startup pass decrypts a manifest-allowed one straight back into the renderer as plaintext (SPEC-02 §3.1). Retention: the row exists only for the duration of the re-homing transaction — the state machine discards it at S6 — and there is NO TTL sweeper, so the SPEC-02 §3 row 12 purge is the only backstop; the declared max_days is the intended ceiling, not an enforced timer (same disclosure as appdata_temp_staging). Export: never through any user-facing path, since SPEC-03 envelopes are built from the renderer stores, but `db:export` and an unredacted diagnostic backup copy the raw file, so this declares the REQUIRED policy rather than describing the code. DO NOT BUMP `version` ON THIS ENTRY (or on any PII at-rest entry) UNTIL THE LANDMINE IS CLEARED: the AAD's S is a hardcoded constant, PII_SCHEMA_VERSION = 1 in electron/cryptoCapability.ts, and the day it becomes a per-key manifest lookup a `version` bump re-labels every existing envelope's S and strands it. See ADR-001 §3.3 TODO(hermes) and SPEC-04 §6.",
+      "legal_basis": "consent",
+      "owner": "demeter",
+      "version": "1.0"
+    },
+    {
+      "key": "legacy_residue",
+      "surface": "sqlite_domain_tables",
+      "platforms": ["electron"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "diagnostic_only",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Retained LEGACY CIPHERTEXT for one PII value (Beta5 Wave 2, migration 0005_legacy_residue.sql, ADR-001 §3.6). One row is the pre-remediation at-rest blob exactly as it was found in `storage` — an `enc1:safeStorage:<base64>` raw OS-keyring output, or an `enc1:envelope:{…}` v1.1 self-asserted-AAD envelope — written when §3.6 recovery re-seals that value under the new bound envelope. PII-bearing because the blob IS a sealed copy of a user value and is the only retained copy after a re-homing, so it must be purgeable and redacted on the same terms as live PII. Never plaintext: both legacy shapes are ciphertext. A dedicated table rather than a `storage` row for the two provable reasons recorded for pii_stage — the 10 s persistence-bridge sweep DELETES every `storage` key absent from renderer localStorage (a residue row would be gone within one poll, silently dropping the only retained copy of a value that may exist nowhere else), and the startup pass materializes a manifest-ALLOWED `storage` row into the renderer. RETENTION IS DELIBERATE AND LONG: the approved mode is COPY-AND-NEVER-DELETE, because no mechanism can prove an old client is not still writing that row, and the passphrase fallback never replicated a value anywhere else, so deleting here is unrecoverable by construction. The blob survives until the user runs the SPEC-02 erasure flow, so retention is declared `user_controlled` / `max_days: 0` — no automatic expiry, removal is the user's erasure action — which is the ABSENCE of a retention feature rather than one. Declaring this table is the Wave 0 `history_entries` lesson applied forward: an undeclared PII-bearing table is invisible to the ADR-002 §2.3 scan, the SPEC-02 §3 purge, the §6 rescan and the erasure post-condition, while holding recovered user data. Export: never through any user-facing path, since SPEC-03 envelopes are built from the renderer stores, but `db:export` and an unredacted diagnostic backup copy the raw file, so this declares the REQUIRED policy rather than describing the code. DO NOT BUMP `version` ON THIS ENTRY (or on any PII at-rest entry) UNTIL THE LANDMINE IS CLEARED: the AAD's S is a hardcoded constant, PII_SCHEMA_VERSION = 1 in electron/cryptoCapability.ts, and the day it becomes a per-key manifest lookup a `version` bump re-labels every existing envelope's S and strands it. See ADR-001 §3.3 TODO(hermes) and SPEC-04 §6.",
       "legal_basis": "consent",
       "owner": "demeter",
       "version": "1.0"
@@ -272,20 +367,20 @@
       "key": "open3dcalc_dashboard_v1",
       "surface": "localStorage",
       "platforms": ["electron", "web", "pwa"],
-      "class": "derived_analytics",
-      "pii": true,
-      "persistence": "encrypted_at_rest",
-      "sync": "opt_in",
-      "export": "user_export",
+      "class": "user_preference",
+      "pii": false,
+      "persistence": "plaintext_allowed",
+      "sync": "never",
+      "export": "never",
       "erasure": "erase_on_delete_all",
       "retention": {
         "policy": "user_controlled",
         "max_days": 0
       },
-      "purpose": "Dashboard aggregates over user history; PII-derived because aggregates reference user content.",
-      "legal_basis": "consent",
+      "purpose": "Dashboard targets the user typed in (printsPerMonth, buyPrice, targetSellPrice). The revenue/profit aggregates the panel displays are computed in memory from the history store on every render and are never persisted under this key.",
+      "legal_basis": "not_personal_data",
       "owner": "hermes",
-      "version": "1.0"
+      "version": "1.1"
     },
     {
       "key": "open3dcalc_dashboard_goal",
@@ -421,44 +516,6 @@
       "version": "1.0"
     },
     {
-      "key": "idb_reports_staging",
-      "surface": "indexeddb",
-      "platforms": ["web", "pwa"],
-      "class": "cache",
-      "pii": true,
-      "persistence": "encrypted_at_rest",
-      "sync": "never",
-      "export": "never",
-      "erasure": "erase_on_delete_all",
-      "retention": {
-        "policy": "session_only",
-        "max_days": 1
-      },
-      "purpose": "Transient staging of generated report documents (may embed customer names); encrypted, short-lived, cleared on erasure.",
-      "legal_basis": "consent",
-      "owner": "aphrodite",
-      "version": "1.0"
-    },
-    {
-      "key": "opfs_export_staging",
-      "surface": "opfs",
-      "platforms": ["web", "pwa"],
-      "class": "cache",
-      "pii": true,
-      "persistence": "encrypted_at_rest",
-      "sync": "never",
-      "export": "never",
-      "erasure": "erase_on_delete_all",
-      "retention": {
-        "policy": "session_only",
-        "max_days": 1
-      },
-      "purpose": "Origin-private filesystem staging for in-progress export envelopes; encrypted, discarded on crash (SPEC-03 §7).",
-      "legal_basis": "consent",
-      "owner": "hermes",
-      "version": "1.0"
-    },
-    {
       "key": "appdata_logs",
       "surface": "logs",
       "platforms": ["electron"],
@@ -491,7 +548,26 @@
         "policy": "session_only",
         "max_days": 1
       },
-      "purpose": "Temp files for in-progress operations (import staging, snapshots); encrypted; inside erasure scope (SPEC-02 §4).",
+      "purpose": "Whole-database staging copy written by db:import (electron/main.ts .open3dcalc-import-<ts>.tmp in the database directory) so the swap can be validated before the live file is replaced. PII-bearing because the copy is the entire database. It exists only for the duration of the import and is renamed away on success; there is no TTL sweeper, so the SPEC-02 §3 store row 10 purge (tempStagingAdapter) is the only enforcement. GAP: written by a plain fs.copyFile, so this entry declares the REQUIRED encrypted at-rest policy that the code does not yet satisfy.",
+      "legal_basis": "consent",
+      "owner": "hermes",
+      "version": "1.1"
+    },
+    {
+      "key": "appdata_diagnostic_backup",
+      "surface": "appdata_files",
+      "platforms": ["electron"],
+      "class": "diagnostic",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "diagnostic_only",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "fixed",
+        "max_days": 14
+      },
+      "purpose": "Operator-requested diagnostic SQLite backups (ADR-003 §2.2), written to an operator-chosen path behind the diagnostic gate. Real retention is 14 days, matching DIAGNOSTIC_RETENTION_DAYS, and a <target>.meta.json sidecar carries it. GAP: the redact:false path (electron/diagnosticBackup.ts) is a straight unredacted, unencrypted fsp.copyFile of the whole database, so this entry declares the REQUIRED at-rest policy that the code does not yet satisfy.",
       "legal_basis": "consent",
       "owner": "hermes",
       "version": "1.0"
@@ -499,7 +575,7 @@
     {
       "key": "erasure_snapshots",
       "surface": "snapshots",
-      "platforms": ["electron", "web", "pwa"],
+      "platforms": ["electron"],
       "class": "snapshot",
       "pii": true,
       "persistence": "encrypted_at_rest",
@@ -510,10 +586,10 @@
         "policy": "fixed",
         "max_days": 7
       },
-      "purpose": "Pre-erasure safety snapshots (SPEC-02 §5): encrypted with TTL, destroyed after commit, inside erasure scope.",
+      "purpose": "Pre-erasure safety snapshots (SPEC-02 §5): encrypted with TTL, destroyed after commit, inside erasure scope. Electron only — the desktop saga uses diskSnapshotStore under userData; the web/PWA webSnapshotStore() has no production caller.",
       "legal_basis": "consent",
       "owner": "hermes",
-      "version": "1.0"
+      "version": "1.1"
     },
     {
       "key": "session_passphrase_key",
@@ -567,10 +643,10 @@
         "policy": "fixed",
         "max_days": 7
       },
-      "purpose": "Encrypted rollback snapshot of the current erasure saga (AES-256-GCM via the ADR-001 capability); destroyed on commit/rollback or after the 7-day TTL.",
+      "purpose": "Encrypted rollback snapshot of the current erasure saga (AES-256-GCM via the ADR-001 capability); the value is ciphertext only, and it is destroyed on commit/rollback or after the 7-day TTL. DECLARED AND WRITABLE: webSnapshotStore().write() writes this key through guardedStorage (erasureSaga/webStores.ts), so the S1 gate must keep recognizing it — an unregistered key makes the production write a silent no-op. NOT-YET-WIRED: webSnapshotStore() currently has no production caller, so no saga invokes it yet. The electron saga uses the separate erasure_snapshots entry (diskSnapshotStore under userData).",
       "legal_basis": "contract_performance",
       "owner": "hermes",
-      "version": "1.0"
+      "version": "1.1"
     },
     {
       "key": "open3dcalc_model_comparison",
@@ -665,6 +741,25 @@
       "purpose": "Active destination id and the list of destinations the user hid from navigation. Additive key: absence means all destinations visible. Hiding a destination never deletes the data behind it.",
       "legal_basis": "not_personal_data",
       "owner": "aphrodite",
+      "version": "1.0"
+    },
+    {
+      "key": "open3dcalc_legacy_pii_rehomed_v1",
+      "surface": "localStorage",
+      "platforms": ["web", "pwa"],
+      "class": "onboarding_flag",
+      "pii": false,
+      "persistence": "plaintext_allowed",
+      "sync": "never",
+      "export": "never",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Value-free completion flag for the web re-home of legacy plaintext PII (open3dcalc_customers_v1, open3dcalc_quotes_v1, open3dcalc_history_v2) into the encrypted vault (Wave 3, HIGH-3). It stores only a version and the migrated key NAMES - never a record field - and exists so a later unlock does not re-migrate. Non-PII operational state: it does not change what is collected or its legal basis, so it carries no policy_version bump and no re-consent. The plaintext source is never deleted (copy-without-delete) and is disclosed separately.",
+      "legal_basis": "not_personal_data",
+      "owner": "hermes",
       "version": "1.0"
     }
   ]

@@ -1,4 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
+// Type-only: erased at compile time, so this adds no runtime require across the
+// CJS/ESM boundary. `resolution-mode: import` is required by TS1541 because
+// preload.cts is CommonJS and the source module is ESM. Deriving the shape
+// means a fifth PII table is a compile error here, not a silently un-reported
+// column in the IPC contract.
+import type { PiiDomainTableCounts } from "./piiDomainTables.js" with { "resolution-mode": "import" };
 
 /**
  * Type-safe API exposed to the renderer process via contextBridge.
@@ -169,7 +175,7 @@ const electronAPI = {
       entries: Array<{ key: string; surface: string; status: string }>;
       legacyCount: number;
       encryptedCount: number;
-      domainTables: { customers: number; quotes: number; quote_items: number };
+      domainTables: PiiDomainTableCounts;
       manifestAvailable: boolean;
     }> => ipcRenderer.invoke("privacy:scan-report"),
 
@@ -203,6 +209,45 @@ const electronAPI = {
       key: string,
     ): Promise<{ key: string; eliminated: boolean }> =>
       ipcRenderer.invoke("privacy:eliminate-key", key),
+
+    /**
+     * ADR-001 §3.6: which stored classes are unreadable, and whether recovery
+     * can still be attempted for each.
+     *
+     * `reason` is the MAIN process's own refusal code, reused rather than
+     * re-invented on this side — a second vocabulary here would drift, and these
+     * are the codes an operator needs in a bug report. Metadata only: key NAMES
+     * and codes, never a value (§3.2).
+     */
+    recoveryReport: (): Promise<{
+      scannedAt: string;
+      unavailable: Array<{
+        key: string;
+        reason: string;
+        recoverable: boolean;
+      }>;
+    }> => ipcRenderer.invoke("privacy:recovery-report"),
+
+    /**
+     * ADR-001 §3.6 recovery for one key: copy → re-seal → verify.
+     *
+     * `verified` is true only after a fresh read-back through the normal bound
+     * path authenticated and matched the full payload, so a caller can treat
+     * `recovered: true` as "this is now a properly bound envelope" rather than
+     * "a write was attempted". NEVER deletes the legacy blob: the copy is
+     * retained as disclosed residue and the user removes it through the erasure
+     * flow.
+     */
+    recoverKey: (
+      key: string,
+    ): Promise<{
+      key: string;
+      recovered: boolean;
+      verified: boolean;
+      shape?: string;
+      reason?: string;
+      residueRetained?: boolean;
+    }> => ipcRenderer.invoke("privacy:recover-key", key),
   },
 } as const;
 

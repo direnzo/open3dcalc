@@ -62,6 +62,7 @@ describe("DataSyncModal", () => {
     mockExportData.mockResolvedValue({
       fileName: "backup.open3dcalc",
       sizeBytes: 2048,
+      piiIncluded: true,
     });
     render(<DataSyncModal open={true} />);
     // SPEC-03: export is always encrypted — the password is required.
@@ -80,6 +81,27 @@ describe("DataSyncModal", () => {
     });
     expect(await screen.findByText(/backup.open3dcalc/)).toBeInTheDocument();
     expect(screen.getByText(/sync.export.success/)).toBeInTheDocument();
+    // The vault was available, so the honest PII-excluded warning is absent.
+    expect(
+      screen.queryByText("sync.export.piiExcluded"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("warns when the export omitted PII because the vault was unavailable", async () => {
+    mockExportData.mockResolvedValue({
+      fileName: "backup.open3dcalc",
+      sizeBytes: 2048,
+      piiIncluded: false,
+    });
+    render(<DataSyncModal open={true} />);
+    fireEvent.change(screen.getByLabelText("sync.export.password"), {
+      target: { value: "senha-sintética" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "sync.export.button" }));
+
+    expect(
+      await screen.findByText("sync.export.piiExcluded"),
+    ).toBeInTheDocument();
   });
 
   it("toggles password field visibility", () => {
@@ -116,7 +138,12 @@ describe("DataSyncModal", () => {
 
   it("imports a file and shows results", async () => {
     mockIsEncrypted.mockResolvedValue(false);
-    mockImportData.mockResolvedValue({ imported: 3, conflicts: 1, errors: 0 });
+    mockImportData.mockResolvedValue({
+      imported: 3,
+      conflicts: 1,
+      errors: 0,
+      piiRefused: [],
+    });
     const { container } = render(<DataSyncModal open={true} />);
     fireEvent.click(screen.getByRole("tab", { name: "sync.import.tab" }));
 
@@ -143,6 +170,38 @@ describe("DataSyncModal", () => {
       screen.getByText("sync.import.results.conflicts"),
     ).toBeInTheDocument();
     expect(screen.getByText(/sync.import.success/)).toBeInTheDocument();
+    // No refusal, so the honest PII-refused warning is absent.
+    expect(
+      screen.queryByText("sync.import.piiRefused"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("warns when PII was refused because the vault was unavailable", async () => {
+    mockIsEncrypted.mockResolvedValue(false);
+    mockImportData.mockResolvedValue({
+      imported: 3,
+      conflicts: 0,
+      errors: 0,
+      piiRefused: ["customers", "quotes", "history"],
+    });
+    const { container } = render(<DataSyncModal open={true} />);
+    fireEvent.click(screen.getByRole("tab", { name: "sync.import.tab" }));
+
+    const input = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["data"], "backup.open3dcalc", {
+      type: "application/octet-stream",
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(mockIsEncrypted).toHaveBeenCalledWith(file));
+
+    fireEvent.click(screen.getByRole("button", { name: "sync.import.button" }));
+
+    expect(
+      await screen.findByText("sync.import.piiRefused"),
+    ).toBeInTheDocument();
   });
 
   it("shows decryption password field for encrypted files", async () => {

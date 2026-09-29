@@ -5,6 +5,11 @@
  * and consumed by `src/overrides/db-bridge.ts`.
  */
 
+// Type-only: erased at compile time. Deriving the report shape from the
+// canonical PII table list means adding a table is a compile error here rather
+// than a silently un-reported column in the IPC contract.
+import type { PiiDomainTableCounts } from "../../../../electron/piiDomainTables.js";
+
 /** Database operations available through IPC. */
 /** Full Electron API exposed via contextBridge. */
 export interface ElectronAPI {
@@ -54,7 +59,7 @@ declare global {
       entries: Array<{ key: string; surface: string; status: string }>;
       legacyCount: number;
       encryptedCount: number;
-      domainTables: { customers: number; quotes: number; quote_items: number };
+      domainTables: PiiDomainTableCounts;
       manifestAvailable: boolean;
     }>;
 
@@ -82,6 +87,40 @@ declare global {
     eliminateKey: (
       key: string,
     ) => Promise<{ key: string; eliminated: boolean }>;
+
+    /**
+     * ADR-001 §3.6: which stored classes are unreadable, and whether recovery
+     * can still be attempted for each. `reason` is the MAIN process's own
+     * refusal code, reused rather than re-invented here — a second vocabulary
+     * would drift, and these are the codes an operator needs. Metadata only:
+     * key NAMES and codes, never a value (§3.2).
+     */
+    recoveryReport: () => Promise<{
+      scannedAt: string;
+      unavailable: Array<{
+        key: string;
+        reason: string;
+        recoverable: boolean;
+      }>;
+    }>;
+
+    /**
+     * ADR-001 §3.6 recovery for one key: copy → re-seal → verify.
+     *
+     * `verified` is true only after a fresh read-back through the normal bound
+     * path authenticated and matched the full payload, so `recovered: true` may
+     * be read as "this is now a properly bound envelope" rather than "a write
+     * was attempted". NEVER deletes the legacy blob: the copy is retained as
+     * disclosed residue and the user removes it through the erasure flow.
+     */
+    recoverKey: (key: string) => Promise<{
+      key: string;
+      recovered: boolean;
+      verified: boolean;
+      shape?: string;
+      reason?: string;
+      residueRetained?: boolean;
+    }>;
   }
 }
 

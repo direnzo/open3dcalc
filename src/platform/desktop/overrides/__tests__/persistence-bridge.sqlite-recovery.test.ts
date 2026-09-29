@@ -9,12 +9,16 @@ import { isKeyAllowed } from "@/shared/lib/manifestGate";
 import { closeDatabase, initDatabase } from "../../../../../db/database";
 import { writeStoredRow } from "../../../../../electron/persistGate";
 import type { ElectronAPI } from "@/platform/desktop/types/electron";
-import { initPersistenceBridge } from "../persistence-bridge";
+import {
+  initPersistenceBridge,
+  PersistenceSaveError,
+} from "../persistence-bridge";
 
 interface ManifestKey {
   key: string;
   surface: string;
   platforms: string[];
+  pii?: boolean;
 }
 
 const manifestPath = path.resolve(
@@ -24,16 +28,40 @@ const manifestPath = path.resolve(
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
   keys: ManifestKey[];
 };
+/**
+ * The keys the bridge migrates/hydrates: manifest-allowed, localStorage surface,
+ * electron, and NOT PII.
+ *
+ * Wave 3 (T3.1): a PII key is refused wholesale by the bridge, so the "allowed
+ * renderer keys" set is exactly the non-PII subset. Deriving it from the
+ * manifest's `pii` flag keeps this spec honest against the manifest rather than
+ * against a hand-maintained list — and it is the same classification the
+ * bridge's own denylist mirrors.
+ */
 const ALLOWED_RENDERER_KEYS = manifest.keys
   .filter(
-    ({ key, surface, platforms }) =>
+    ({ key, surface, platforms, pii }) =>
       key.startsWith("open3dcalc_") &&
       surface === "localStorage" &&
-      platforms.includes("electron"),
+      platforms.includes("electron") &&
+      pii !== true,
   )
   .map(({ key }) => key)
   .filter(isKeyAllowed)
   .sort();
+
+/** Every manifest PII key on the renderer surface: none may be mirrored. */
+const PII_RENDERER_KEYS = manifest.keys
+  .filter(
+    ({ key, surface, platforms, pii }) =>
+      key.startsWith("open3dcalc_") &&
+      surface === "localStorage" &&
+      platforms.includes("electron") &&
+      pii === true,
+  )
+  .map(({ key }) => key)
+  .sort();
+
 const UNKNOWN_KEY = "open3dcalc_synthetic_unknown";
 const FIRST_BRIDGE_KEY = "open3dcalc_settings_v2";
 const FIXED_TIME = 1_700_000_123_456;
@@ -205,6 +233,14 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     expect(postimage).toEqual(expectedRows);
     expect(postimage.map(({ key }) => key)).toEqual(ALLOWED_RENDERER_KEYS);
     expect(postimage.some(({ key }) => key === UNKNOWN_KEY)).toBe(false);
+    // T3.1: no PII key is among the rows the bridge wrote. It never even
+    // attempted them, which is why the population is exactly the non-PII set.
+    for (const pii of PII_RENDERER_KEYS) {
+      expect(
+        postimage.some(({ key }) => key === pii),
+        `${pii} must not be written by the bridge`,
+      ).toBe(false);
+    }
     expect(sqlite.$client.pragma("integrity_check", { simple: true })).toBe(
       "ok",
     );
@@ -224,21 +260,64 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     expect(sqlite.$client.pragma("foreign_key_check")).toEqual([]);
   });
 
-  it("hydrates atomically when a SQLite read fails", async () => {
+  it("isolates a per-key read failure, and still rejects on a structural failure", async () => {
+    // CONTRACT CHANGE. This test used to require that one `db:load` failure
+    // rejected `initPersistenceBridge()` — all-or-nothing hydration. That took
+    // the whole profile down on ONE unreadable row: the bridge never registered
+    // its auto-save interval or its `beforeunload` handler, and the app could
+    // not start. The per-key isolation in `loadFromDatabase` is the fix for
+    // that bricked-startup regression, so the old guarantee is genuinely gone.
+    //
+    // The contract now: a per-key `db.load` failure does NOT reject
+    // `initPersistenceBridge()`; the key is quarantined and reported while
+    // every readable key hydrates, and only a structural failure — `listKeys`,
+    // or the manifest failing — still rejects startup, because then there is no
+    // key set to isolate and hydrating from stale localStorage would look like
+    // success and then lose every write.
     failureArmed = false;
     await initPersistenceBridge();
     const sourcePreimage = localStorageSnapshot();
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     setItem.mockClear();
+
+    const reported: Array<{
+      unavailable: Array<{ key: string; reason: string }>;
+    }> = [];
+    const listener = (event: Event): void => {
+      reported.push(
+        (event as CustomEvent).detail as {
+          unavailable: Array<{ key: string; reason: string }>;
+        },
+      );
+    };
+    window.addEventListener("open3dcalc:pii-unavailable", listener);
+
     vi.spyOn(dbApi, "load").mockRejectedValue(
       new Error("synthetic hydration read failure"),
     );
 
-    await expect(initPersistenceBridge()).rejects.toThrow(
-      "synthetic hydration read failure",
-    );
+    await expect(initPersistenceBridge()).resolves.toBeUndefined();
+
+    // Fail-closed and non-partial: an unreadable value is never written into
+    // localStorage (and never as raw ciphertext), so the source is untouched.
     expect(localStorageSnapshot()).toEqual(sourcePreimage);
     expect(setItem).not.toHaveBeenCalled();
+
+    // …but the refusal is ANNOUNCED per key, not swallowed: the user can be
+    // told which class is missing instead of seeing empty state as data loss.
+    expect(reported.length).toBeGreaterThan(0);
+    const unavailable = reported.flatMap((detail) => detail.unavailable);
+    expect(unavailable.map((u) => u.key)).toContain(FIRST_BRIDGE_KEY);
+    expect(unavailable.every((u) => u.reason.length > 0)).toBe(true);
+
+    window.removeEventListener("open3dcalc:pii-unavailable", listener);
+
+    // A STRUCTURAL failure is still terminal — the isolation is not a blanket
+    // catch. There is no key set to isolate, so startup must refuse.
+    vi.spyOn(dbApi, "listKeys").mockRejectedValue(
+      new Error("SQLITE_CANTOPEN: unable to open database file"),
+    );
+    await expect(initPersistenceBridge()).rejects.toThrow();
   });
 
   it("flushes on close and periodically, prunes stale keys, and reports DB errors", async () => {
@@ -255,11 +334,8 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     const closeFailure = new Error("synthetic close-time save failure");
     save.mockRejectedValueOnce(closeFailure);
     window.dispatchEvent(new Event("beforeunload"));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(warn).toHaveBeenCalledWith(
-      "[persistence-bridge] Failed to save localStorage to SQLite:",
-      closeFailure,
+    await vi.waitFor(() =>
+      expect(reportedSaveError(warn.mock.calls, closeFailure)).toBeDefined(),
     );
 
     const staleKey = "open3dcalc_synthetic_stale";
@@ -282,9 +358,8 @@ describe("production Electron persistence bridge over on-disk SQLite", () => {
     const intervalFailure = new Error("synthetic periodic save failure");
     save.mockRejectedValueOnce(intervalFailure);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(warn).toHaveBeenCalledWith(
-      "[persistence-bridge] Failed to save localStorage to SQLite:",
-      intervalFailure,
+    await vi.waitFor(() =>
+      expect(reportedSaveError(warn.mock.calls, intervalFailure)).toBeDefined(),
     );
     warn.mockRestore();
   });
@@ -356,4 +431,28 @@ function setElectronDb(db: ElectronAPI["db"]): void {
   ).electronAPI = {
     db,
   };
+}
+
+/**
+ * The save pass that reported `original`, as the reporter received it.
+ *
+ * A save pass is reported as one `PersistenceSaveError` carrying every key it
+ * lost and each key's own error, rather than as the first refusal: the loop
+ * continues past a refused key so a single quarantined PII key cannot strand
+ * the rest of the pass, and the aggregate is what makes that visible. The
+ * per-key error is still reachable, which is what these specs are about — a
+ * synthetic failure has to be findable inside the aggregate by identity, not
+ * merely by message.
+ */
+function reportedSaveError(
+  warnCalls: unknown[][],
+  original: unknown,
+): PersistenceSaveError | undefined {
+  return warnCalls
+    .map(([, error]) => error)
+    .find(
+      (error): error is PersistenceSaveError =>
+        error instanceof PersistenceSaveError &&
+        error.failures.some(({ error }) => error === original),
+    );
 }

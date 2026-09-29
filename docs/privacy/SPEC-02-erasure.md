@@ -20,13 +20,13 @@ prepared ──> snapshot_taken ──> deleting ──> committed
                   └────> rolled_back ◄────┘ (failure before commit point)
 ```
 
-| State | Meaning | Persisted? | Resumable? |
-|-------|---------|-----------|------------|
-| `prepared` | User confirmed delete-all; manifest scanned; per-store plan built; passphrase/capability verified | journal on disk | yes — restart re-enters `prepared` |
-| `snapshot_taken` | Safety snapshot of all PII-bearing surfaces written (encrypted, TTL) | journal + snapshot files | yes — idempotent re-entry |
-| `deleting` | Per-store deletion in progress; each store's progress journaled individually | journal (per-store rows) | yes — resume from first incomplete store |
-| `committed` | All stores completed deletion; post-condition rescan passed; snapshot destroyed | journal (final) | terminal |
-| `rolled_back` | Failure before the commit point; snapshot restored; partial deletions undone | journal (final) | terminal (user may retry) |
+| State            | Meaning                                                                                           | Persisted?               | Resumable?                               |
+| ---------------- | ------------------------------------------------------------------------------------------------- | ------------------------ | ---------------------------------------- |
+| `prepared`       | User confirmed delete-all; manifest scanned; per-store plan built; passphrase/capability verified | journal on disk          | yes — restart re-enters `prepared`       |
+| `snapshot_taken` | Safety snapshot of all PII-bearing surfaces written (encrypted, TTL)                              | journal + snapshot files | yes — idempotent re-entry                |
+| `deleting`       | Per-store deletion in progress; each store's progress journaled individually                      | journal (per-store rows) | yes — resume from first incomplete store |
+| `committed`      | All stores completed deletion; post-condition rescan passed; snapshot destroyed                   | journal (final)          | terminal                                 |
+| `rolled_back`    | Failure before the commit point; snapshot restored; partial deletions undone                      | journal (final)          | terminal (user may retry)                |
 
 Rules:
 
@@ -48,23 +48,138 @@ Rules:
 
 The saga MUST iterate over **every** surface in SPEC-01, per platform:
 
-| # | Store | Platform | Deletion mechanics |
-|---|-------|----------|--------------------|
-| 1 | `localStorage` | all | remove every manifest key + any unknown `open3dcalc_*` key (default-deny sweep, R1) |
-| 2 | SQLite domain tables | electron | `DELETE FROM` customers, quotes, quote_items, …; then `VACUUM` |
-| 3 | SQLite `storage` table | electron | delete all rows; then `VACUUM` |
-| 4 | SQLite WAL/SHM sidecars | electron | `wal_checkpoint(TRUNCATE)` after table deletion so freed pages are not recoverable from WAL; verify `-wal`/`-shm` are empty/removed |
-| 5 | IndexedDB | web/pwa | delete databases + object stores used by the app |
-| 6 | OPFS | web/pwa | recursive delete of app-owned directories |
-| 7 | Cache API / Service Worker | pwa | `caches.keys()` → delete all app caches; unregister SW; purge any cached PII-bearing responses |
-| 8 | appData files | electron | delete app-owned files under `userData` (window state, prefs, etc.) except the saga journal itself |
-| 9 | logs | electron | truncate/delete log files (they must be PII-scrubbed anyway, but erasure removes them) |
-| 10 | temp/staging | all | purge staging directories (import/export staging, temp files) |
-| 11 | snapshots | all | destroy prior erasure snapshots (see §5); the current saga's snapshot is handled by commit/rollback |
+| #   | Store                      | Platform | Deletion mechanics                                                                                                                  |
+| --- | -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `localStorage`             | all      | remove every manifest key + any unknown `open3dcalc_*` key (default-deny sweep, R1)                                                 |
+| 2   | SQLite domain tables       | electron | `DELETE FROM` every table in `electron/piiDomainTables.ts` (customers, quotes, quote_items, history_entries); then `VACUUM`         |
+| 3   | SQLite `storage` table     | electron | delete all rows; then `VACUUM`                                                                                                      |
+| 4   | SQLite WAL/SHM sidecars    | electron | `wal_checkpoint(TRUNCATE)` after table deletion so freed pages are not recoverable from WAL; verify `-wal`/`-shm` are empty/removed |
+| 5   | IndexedDB                  | web/pwa  | delete databases + object stores used by the app                                                                                    |
+| 6   | OPFS                       | web/pwa  | recursive delete of app-owned directories                                                                                           |
+| 7   | Cache API / Service Worker | pwa      | `caches.keys()` → delete all app caches; unregister SW; purge any cached PII-bearing responses                                      |
+| 8   | appData files              | electron | delete app-owned files under `userData` (window state, prefs, etc.) except the saga journal itself                                  |
+| 9   | logs                       | electron | truncate/delete log files (they must be PII-scrubbed anyway, but erasure removes them)                                              |
+| 10  | temp/staging               | all      | purge staging directories (import/export staging, temp files)                                                                       |
+| 11  | snapshots                  | electron | destroy prior erasure snapshots (see §5); the current saga's snapshot is handled by commit/rollback                                 |
+| 12  | `pii_stage` preimage table | electron | `DELETE FROM pii_stage` (§3.1) — an in-flight migration preimage is the user's data mid-re-homing                                   |
+
+### 3.1 The `pii_stage` preimage table
+
+`pii_stage` (migration `0004_pii_stage.sql`) holds the **sealed preimage** of a
+value being re-homed from a plaintext source to its encrypted destination: an
+ADR-001 envelope (`enc1:…`), never plaintext, beside the AAD components it is
+bound to (`privacy_epoch`, `schema_version`, `envelope_version`) and the
+`state`/`generation` of the transaction that owns it.
+
+It is a dedicated table, not a row in `storage`, and the reason is mechanical
+rather than stylistic:
+
+- `persistence-bridge.deleteStaleKeys()` runs every `AUTO_SAVE_INTERVAL_MS`
+  (10 s) and **deletes** every `storage` key absent from renderer
+  `localStorage`, so a stage row parked there is removed within one poll — not
+  lost in a race;
+- `loadFromDatabase()` materializes every manifest-**allowed** `storage` row
+  into renderer `localStorage`, so a stage row parked under an allowed key is
+  decrypted straight back into the renderer as plaintext — the exact mirror this
+  work removes.
+
+Both halves are pinned by
+`src/platform/desktop/overrides/__tests__/persistence-bridge.pii-stage.test.ts`.
+A separate table is invisible to `db:list-keys` and to that sweep, so a staged
+preimage lives exactly as long as its own state machine says it should
+(S2 stage write → S4 destination write → S6 stage removal → S8 per-source
+deletes, each in its own transaction — `electron/piiStage.ts`).
+
+**In the erasure scope**, therefore:
+
+- §3 row 12 / the `sqlite_domain_tables` purge: every `DELETE FROM pii_stage`;
+- §6 rescan: a surviving stage row is named (`pii_stage: N rows`), so a purge
+  that could not remove it blocks the commit instead of hiding it;
+- §5 snapshot: the payload captures and the rollback restores stage rows — a
+  rollback that omitted them would be unrecoverable for exactly the transaction
+  that is mid-flight. The restore is a **merge** (upsert by key), so it restores
+  what the saga deleted without destroying what was written after the snapshot;
+- ADR-003 §2.2.2: a redacted diagnostic backup strips the table, and a strip
+  that is _refused_ (locked database, read-only file, corrupt page, refusing
+  trigger) is reported in `stripFailures` / the sidecar's `strip_failures` rather
+  than counted as a clean redaction. A table the profile predates is not a
+  refusal and is not reported.
+
+`PII_ERASURE_TABLES` in `electron/piiDomainTables.ts` is the single constant
+every one of those sites iterates (the four PII domain tables plus this one) —
+the direct consequence of the `history_entries` omission described below. It is
+the same set as `PII_DOMAIN_TABLES`: `pii_stage` is a declared
+`sqlite_domain_tables` surface in SPEC-01 as of `policy_version` 1.6, so the
+pinned two-way list covers it. The two constants exist separately because they
+answer different questions — erasure coverage, versus what the ADR-002 startup
+scan is allowed to count as plaintext residue (§3.1, last paragraph).
+
+**Exempt from `db:import` validation.** `db/database.ts requiredTables()` derives
+the mandatory table list from the migration files by regex, so adding any table
+makes it a precondition for importing a database. `pii_stage` is exempted
+(`IMPORT_EXEMPT_TABLES`), because:
+
+1. the check cannot prevent a bad swap — `db:import` validates a copy, swaps it
+   in, and then calls `initDatabase()`, which re-runs the migration that creates
+   this table;
+2. rejecting it would remove recoverability exactly where it is needed, since the
+   files lacking `pii_stage` are the pre-remediation backups of the users this
+   work protects;
+3. `requiredTables()` is a legitimacy test on the user's **data** schema, not a
+   "is this the newest migration" test — `pii_stage` holds no user data and
+   mirrors nothing.
+
+The exemption is a named constant (not an inferred rule) and is pinned in
+`db/__tests__/pii-stage-migration.test.ts`: a 0000-0003 database is accepted and
+forward-migrated, and a database missing any real table is still refused.
 
 **Snapshot, WAL, and staging are INSIDE the erasure scope.** A delete-all that leaves
 `-wal` files, staging files, or old snapshots containing PII has not completed. The
 post-condition rescan (§6) checks all of them.
+
+**The PII domain table list has exactly one source of truth:**
+`PII_ERASURE_TABLES` in `electron/piiDomainTables.ts` — the PII domain tables
+(`customers`, `quotes`, `quote_items`, `history_entries`) plus the `pii_stage`
+preimage table (§3.1). The purge adapter (§3 row 2), the §6 rescan
+post-condition, the §5 snapshot payload, and the ADR-003 §2.2.2 backup redaction
+all iterate that one list. `history_entries` was missing from every one of those
+sites, which made the §6 rescan report "clean" while its PII-bearing rows
+survived — the list must never be duplicated per module. Adding a PII-bearing
+table requires adding it there, and declaring it `pii: true` on the
+`sqlite_domain_tables` surface in SPEC-01.
+
+**Declared on the `sqlite_domain_tables` surface since `policy_version` 1.6.**
+The table was created by migration `0004_pii_stage.sql` and was PII-bearing from
+that moment, but it was absent from the SPEC-01 fixture — a real PII surface the
+privacy inventory did not name, which is the `history_entries` defect one layer
+out. Declaring it is a privacy-contract change, not bookkeeping: a new declared
+PII surface means a `policy_version` bump, so the version moved 1.5 → 1.6 and
+receipts issued under 1.5 stop validating (SPEC-04 §6). That re-consent cost no
+real user anything because nothing had shipped under 1.5 — but it is not a free
+edit, and the next declared surface will not get that exemption.
+
+**A `pii_stage` row is not legacy-plaintext evidence.** The table is erased,
+snapshotted and redacted like any other PII surface, but it is excluded from
+`PII_LEGACY_PLAINTEXT_TABLES` — the subset the ADR-002 §2.3 startup scan sums to
+decide whether the profile is clean. A stage row is always a sealed `enc1:`
+envelope, never plaintext, so counting it would make every in-flight re-homing
+warn "legacy plaintext PII detected". That is the same class of lie as the
+`history_entries` omission, in the other direction, and the exclusion is pinned
+by `piiDomainTables.test.ts` because it is a deletion: summing the full report
+again would compile and pass.
+
+**Row 5 now has a real target.** The only app database on this surface is
+`open3dcalc_pii_vault` (SPEC-01 `policy_version` 1.8, `pii: true`,
+`erasure: erase_on_delete_all`): the sealed browser store the three PII keys
+migrate onto off plaintext `localStorage`. `indexeddbAdapter().purge()` in
+`src/shared/lib/erasureSaga/rendererSweep.ts` enumerates `indexedDB.databases()`
+and deletes each one, so the vault is covered wholesale by construction rather
+than by an enumerated key list. Note the deliberate asymmetry with row 5's
+`rescan()`: it returns `[]` unconditionally, so the §6 post-condition reports
+"clean" for IndexedDB on the strength of the purge, not of a rescan. That was
+already true before this task, but the vault makes it load-bearing: a purge that
+fails partway still reports clean, and the sealed records are the user's
+customers, quotes and history.
 
 ## 4. Journal format (per-store, resumable)
 
@@ -79,10 +194,10 @@ no user content):
   "policy_version": "1.0",
   "started_at": "2026-09-11T12:00:00Z",
   "stores": [
-    { "store": "sqlite_domain_tables", "state": "done",   "attempts": 1 },
-    { "store": "sqlite_wal_shm",        "state": "done",   "attempts": 1 },
-    { "store": "localstorage",          "state": "in_progress", "attempts": 2 },
-    { "store": "cache_api",             "state": "pending" }
+    { "store": "sqlite_domain_tables", "state": "done", "attempts": 1 },
+    { "store": "sqlite_wal_shm", "state": "done", "attempts": 1 },
+    { "store": "localstorage", "state": "in_progress", "attempts": 2 },
+    { "store": "cache_api", "state": "pending" }
   ]
 }
 ```
@@ -115,7 +230,7 @@ no user content):
     journal records `rollback_window: {ttl_days: 7, key_source: "safeStorage|passphrase"}`.
   - Behavior outside the window: the saga still completes `deleting` → `committed` (the
     user asked for erasure; inability to roll back does not block erasure). If the saga
-    *failed* and rollback is impossible, the terminal state is `committed` with a
+    _failed_ and rollback is impossible, the terminal state is `committed` with a
     `rollback_unavailable` annotation in the journal and a user-visible warning — never a
     silent partial state.
 

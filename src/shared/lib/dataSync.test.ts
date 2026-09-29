@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   collectSyncData,
   validateBundle,
@@ -10,15 +10,72 @@ import {
   decryptData,
   hashData,
   importData,
+  isPiiSyncAvailable,
   type SyncData,
   type EncryptedBundle,
 } from "@/shared/lib/dataSync";
 import { createExportEnvelope } from "@/shared/lib/exportEnvelope";
+import { guardedSyncStorage } from "@/shared/lib/manifestStorage";
 import { APP_VERSION } from "@/shared/version";
+import { useHistoryStore } from "@/shared/stores/historyStore";
+import { useCustomerStore } from "@/shared/stores/customerStore";
+import { useQuoteStore } from "@/shared/stores/quoteStore";
+import {
+  configurePiiStoreRuntime,
+  resetPiiStoreHydrationForTests,
+  unlockPiiStoresAndRehydrate,
+  whenPiiWritesSettled,
+} from "@/shared/lib/crypto/piiStoreHydration";
+import {
+  lockAllPiiStores,
+  resetPiiStoreRuntimeForTests,
+} from "@/shared/lib/crypto/piiStore";
+import { resetPiiStoreGateForTests } from "@/shared/lib/crypto/piiStoreCapability";
+import { zeroizeSessionPassphrase } from "@/shared/lib/crypto/passphraseSession";
+import { PII_STORE_ENVIRONMENT } from "@/shared/lib/crypto/__tests__/piiStoreFixtures";
+import { createFakeIndexedDb } from "@/shared/test/fakeIndexedDb";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
+
+const VAULT_PASS = "senha-sintetica-datasync-4242";
+
+/**
+ * Real encrypted vault for the PII half of the sync tests. `collectSyncData`
+ * reads PII from the hydrated stores and `applySyncData` writes back through
+ * them, so a test that exercises PII must have an unlocked, rehydrated vault —
+ * exactly the production precondition. Synthetic fixtures only.
+ */
+let fakeIdb: ReturnType<typeof createFakeIndexedDb>;
+
+function vaultOptions() {
+  return {
+    indexedDb: fakeIdb.factory,
+    environment: PII_STORE_ENVIRONMENT,
+  };
+}
+
+/** Unlock the three vault-backed stores and hydrate them from the vault. */
+async function hydrateVault(): Promise<void> {
+  configurePiiStoreRuntime(vaultOptions());
+  await unlockPiiStoresAndRehydrate(VAULT_PASS, vaultOptions());
+}
+
+/** Reset the three PII stores to their empty initial state. */
+function resetPiiStores(): void {
+  useHistoryStore.setState({ entries: [] });
+  useCustomerStore.setState({ customers: [] });
+  useQuoteStore.setState({ quotes: [], nextNumber: 1 });
+}
+
+function resetVault(): void {
+  resetPiiStoreGateForTests();
+  lockAllPiiStores();
+  resetPiiStoreRuntimeForTests();
+  resetPiiStoreHydrationForTests();
+  zeroizeSessionPassphrase();
+}
 
 function emptySyncData(): SyncData {
   return {
@@ -37,33 +94,31 @@ function emptySyncData(): SyncData {
   };
 }
 
-/** Seed every known localStorage key the app persists. */
+/**
+ * Seed every known persisted datum: non-PII keys into `localStorage`, PII
+ * into the vault-backed stores (their real post-Wave-3 home). No leg of this
+ * helper writes a PII key to `localStorage`.
+ */
 function seedFullStorage(): void {
   localStorage.setItem(
     "open3dcalc_settings_v2",
     JSON.stringify({ productName: "Vaso", quantity: 2 }),
   );
-  localStorage.setItem(
-    "open3dcalc_history_v2",
-    JSON.stringify({
-      state: { entries: [{ id: "h1", timestamp: 1000 }], search: "" },
-      version: 2,
-    }),
-  );
-  localStorage.setItem(
-    "open3dcalc_customers_v1",
-    JSON.stringify({
-      state: { customers: [{ id: "c1", name: "Ana" }] },
-      version: 1,
-    }),
-  );
-  localStorage.setItem(
-    "open3dcalc_quotes_v1",
-    JSON.stringify({
-      state: { quotes: [{ id: "q1", number: 1 }], nextNumber: 2 },
-      version: 1,
-    }),
-  );
+  useHistoryStore.setState({
+    entries: [
+      {
+        id: "h1",
+        timestamp: 1000,
+      },
+    ] as never,
+  });
+  useCustomerStore.setState({
+    customers: [{ id: "c1", name: "Ana" }] as never,
+  });
+  useQuoteStore.setState({
+    quotes: [{ id: "q1", number: 1 }] as never,
+    nextNumber: 2,
+  });
   localStorage.setItem(
     "open3dcalc_catalog_v1",
     JSON.stringify({
@@ -195,14 +250,28 @@ function localStorageSnapshot(): [string, string][] {
 /* ------------------------------------------------------------------ */
 
 describe("collectSyncData", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    fakeIdb = createFakeIndexedDb();
+    localStorage.clear();
+    resetVault();
+    resetPiiStores();
+  });
+  afterEach(() => {
+    resetVault();
+    resetPiiStores();
+    localStorage.clear();
+  });
 
-  it("returns the correct structure from localStorage", () => {
+  it("returns non-PII from localStorage and PII from the hydrated stores", async () => {
+    await hydrateVault();
     seedFullStorage();
+    await whenPiiWritesSettled();
 
     const data = collectSyncData();
 
     expect(data.settings).toEqual({ productName: "Vaso", quantity: 2 });
+    // PII is captured from the stores (the vault's projection), NOT from the
+    // plaintext keys the old collector read.
     expect(data.history).toEqual([{ id: "h1", timestamp: 1000 }]);
     expect(data.customers).toEqual([{ id: "c1", name: "Ana" }]);
     expect(data.quotes).toEqual([{ id: "q1", number: 1 }]);
@@ -221,25 +290,57 @@ describe("collectSyncData", () => {
     expect(data.sections).toEqual({ costs: true, labor: false });
   });
 
-  it("returns empty defaults when localStorage is empty", () => {
+  it("returns empty defaults when localStorage and the stores are empty", () => {
     const data = collectSyncData();
     expect(data).toEqual(emptySyncData());
   });
 
-  it("tolerates corrupt JSON values without failing", () => {
+  it("tolerates corrupt non-PII JSON values without failing", () => {
     localStorage.setItem("open3dcalc_settings_v2", "{corrupt");
-    localStorage.setItem("open3dcalc_history_v2", "not-json");
     const data = collectSyncData();
     expect(data.settings).toEqual({});
     expect(data.history).toEqual([]);
   });
 
-  it("handles plain-array history format as fallback", () => {
-    localStorage.setItem(
-      "open3dcalc_history_v2",
-      JSON.stringify([{ id: "h1", timestamp: 1 }]),
-    );
-    expect(collectSyncData().history).toEqual([{ id: "h1", timestamp: 1 }]);
+  it("captures PII written to the vault-backed stores", async () => {
+    await hydrateVault();
+    useCustomerStore.setState({
+      customers: [{ id: "c-vault", name: "Cliente do cofre" }] as never,
+    });
+    useHistoryStore.setState({
+      entries: [{ id: "h-vault", timestamp: 42 }] as never,
+    });
+    useQuoteStore.setState({
+      quotes: [{ id: "q-vault", number: 3 }] as never,
+      nextNumber: 4,
+    });
+    await whenPiiWritesSettled();
+
+    const data = collectSyncData();
+    expect(data.customers).toEqual([
+      { id: "c-vault", name: "Cliente do cofre" },
+    ]);
+    expect(data.history).toEqual([{ id: "h-vault", timestamp: 42 }]);
+    expect(data.quotes).toEqual([{ id: "q-vault", number: 3 }]);
+    expect(data.quotesNextNumber).toBe(4);
+    expect(isPiiSyncAvailable()).toBe(true);
+  });
+});
+
+describe("guardedSyncStorage (HIGH-1 write guard)", () => {
+  it.each([
+    "open3dcalc_history_v2",
+    "open3dcalc_customers_v1",
+    "open3dcalc_quotes_v1",
+  ])("refuses to write the plaintext PII key %s", (key) => {
+    localStorage.removeItem(key);
+    expect(() => guardedSyncStorage.setItem(key, '{"state":{}}')).toThrow();
+    expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  it("still writes a non-PII key so the sync path is not neutered", () => {
+    guardedSyncStorage.setItem("open3dcalc_theme", "dark");
+    expect(localStorage.getItem("open3dcalc_theme")).toBe("dark");
   });
 });
 
@@ -363,15 +464,30 @@ describe("exportBundle", () => {
 /* ------------------------------------------------------------------ */
 
 describe("importBundle round-trip", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    fakeIdb = createFakeIndexedDb();
+    localStorage.clear();
+    resetVault();
+    resetPiiStores();
+  });
+  afterEach(() => {
+    resetVault();
+    resetPiiStores();
+    localStorage.clear();
+  });
 
   it("round-trips export → import preserving all data (encrypted)", async () => {
+    await hydrateVault();
     seedFullStorage();
+    await whenPiiWritesSettled();
     const before = collectSyncData();
     const bundle = await exportBundle("senha-rt");
     localStorage.clear();
+    resetPiiStores();
+    await whenPiiWritesSettled();
 
     const result = await importBundle(bundle, "senha-rt");
+    await whenPiiWritesSettled();
 
     expect(result.imported).toEqual(
       expect.arrayContaining([
@@ -386,6 +502,7 @@ describe("importBundle round-trip", () => {
         "sections",
       ]),
     );
+    expect(result.refused).toEqual([]);
     const after = collectSyncData();
     expect(after.settings).toEqual(before.settings);
     expect(after.history).toEqual(before.history);
@@ -396,21 +513,43 @@ describe("importBundle round-trip", () => {
     expect(after.theme).toEqual(before.theme);
     expect(after.dashboard).toEqual(before.dashboard);
     expect(after.sections).toEqual(before.sections);
+    // PII was applied through the stores: no plaintext copy exists.
+    expect(localStorage.getItem("open3dcalc_customers_v1")).toBeNull();
+    expect(localStorage.getItem("open3dcalc_quotes_v1")).toBeNull();
+    expect(localStorage.getItem("open3dcalc_history_v2")).toBeNull();
   });
 
   it("round-trips unencrypted bundles as well", async () => {
+    await hydrateVault();
     seedFullStorage();
+    await whenPiiWritesSettled();
     const before = collectSyncData();
     const bundle = await exportBundle();
     localStorage.clear();
+    resetPiiStores();
+    await whenPiiWritesSettled();
 
     await importBundle(bundle);
+    await whenPiiWritesSettled();
 
     const after = collectSyncData();
     expect(after.settings).toEqual(before.settings);
     expect(after.history).toEqual(before.history);
     expect(after.customers).toEqual(before.customers);
     expect(after.quotes).toEqual(before.quotes);
+  });
+
+  it("refuses PII when the vault is locked, writing no plaintext", async () => {
+    const imported = {
+      ...emptySyncData(),
+      customers: [{ id: "c-locked", name: "Ninguém" }],
+    };
+    const result = applySyncData(imported, "merge");
+
+    expect(result.refused).toContain("customers");
+    expect(result.imported).not.toContain("customers");
+    expect(localStorage.getItem("open3dcalc_customers_v1")).toBeNull();
+    expect(useCustomerStore.getState().customers).toEqual([]);
   });
 });
 
@@ -464,21 +603,30 @@ describe("crypto helpers", () => {
 /* ------------------------------------------------------------------ */
 
 describe("applySyncData merge strategy", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(async () => {
+    fakeIdb = createFakeIndexedDb();
+    localStorage.clear();
+    resetVault();
+    resetPiiStores();
+    // The PII collections no longer live in localStorage: they are written
+    // through the hydrated vault-backed stores, so every assertion below reads
+    // the store's state and additionally proves no plaintext copy appears.
+    await hydrateVault();
+  });
+
+  afterEach(() => {
+    resetVault();
+    resetPiiStores();
+    localStorage.clear();
+  });
 
   it("deduplicates collections by id keeping the newest item", () => {
-    localStorage.setItem(
-      "open3dcalc_history_v2",
-      JSON.stringify({
-        state: {
-          entries: [
-            { id: "h1", timestamp: 100 },
-            { id: "h2", timestamp: 200 },
-          ],
-        },
-        version: 2,
-      }),
-    );
+    useHistoryStore.setState({
+      entries: [
+        { id: "h1", timestamp: 100 },
+        { id: "h2", timestamp: 200 },
+      ] as never,
+    });
 
     const imported = emptySyncData();
     imported.history = [
@@ -488,33 +636,29 @@ describe("applySyncData merge strategy", () => {
 
     const result = applySyncData(imported, "merge");
 
-    const stored = JSON.parse(localStorage.getItem("open3dcalc_history_v2")!);
-    expect(stored.state.entries).toEqual([
+    expect(useHistoryStore.getState().entries).toEqual([
       { id: "h1", timestamp: 999 },
       { id: "h2", timestamp: 200 },
       { id: "h3", timestamp: 300 },
     ]);
     expect(result.conflicts).toContain("history");
+    expect(localStorage.getItem("open3dcalc_history_v2")).toBeNull();
   });
 
   it("keeps the local item when it is newer than the imported one", () => {
-    localStorage.setItem(
-      "open3dcalc_customers_v1",
-      JSON.stringify({
-        state: { customers: [{ id: "c1", name: "Nova", updatedAt: 500 }] },
-        version: 1,
-      }),
-    );
+    useCustomerStore.setState({
+      customers: [{ id: "c1", name: "Nova", updatedAt: 500 }] as never,
+    });
 
     const imported = emptySyncData();
     imported.customers = [{ id: "c1", name: "Velha", updatedAt: 100 }];
 
     applySyncData(imported, "merge");
 
-    const stored = JSON.parse(localStorage.getItem("open3dcalc_customers_v1")!);
-    expect(stored.state.customers).toEqual([
+    expect(useCustomerStore.getState().customers).toEqual([
       { id: "c1", name: "Nova", updatedAt: 500 },
     ]);
+    expect(localStorage.getItem("open3dcalc_customers_v1")).toBeNull();
   });
 
   it("replaces settings with imported values in merge mode", () => {
@@ -581,13 +725,10 @@ describe("applySyncData merge strategy", () => {
   });
 
   it("quotes nextNumber uses Math.max(local, imported) + 1", () => {
-    localStorage.setItem(
-      "open3dcalc_quotes_v1",
-      JSON.stringify({
-        state: { quotes: [{ id: "q1", number: 1 }], nextNumber: 5 },
-        version: 1,
-      }),
-    );
+    useQuoteStore.setState({
+      quotes: [{ id: "q1", number: 1 }] as never,
+      nextNumber: 5,
+    });
 
     const imported = emptySyncData();
     imported.quotes = [{ id: "q2", number: 2 }];
@@ -595,28 +736,26 @@ describe("applySyncData merge strategy", () => {
 
     applySyncData(imported, "merge");
 
-    const stored = JSON.parse(localStorage.getItem("open3dcalc_quotes_v1")!);
-    expect(stored.state.nextNumber).toBe(8); // Math.max(5, 7) + 1
-    expect(stored.state.quotes).toHaveLength(2);
+    expect(useQuoteStore.getState().nextNumber).toBe(8); // Math.max(5, 7) + 1
+    expect(useQuoteStore.getState().quotes).toHaveLength(2);
+    expect(localStorage.getItem("open3dcalc_quotes_v1")).toBeNull();
   });
 
   it("replace mode fully replaces collections", () => {
-    localStorage.setItem(
-      "open3dcalc_history_v2",
-      JSON.stringify({
-        state: { entries: [{ id: "h1", timestamp: 100 }] },
-        version: 2,
-      }),
-    );
+    useHistoryStore.setState({
+      entries: [{ id: "h1", timestamp: 100 }] as never,
+    });
 
     const imported = emptySyncData();
     imported.history = [{ id: "hX", timestamp: 1 }];
 
     const result = applySyncData(imported, "replace");
 
-    const stored = JSON.parse(localStorage.getItem("open3dcalc_history_v2")!);
-    expect(stored.state.entries).toEqual([{ id: "hX", timestamp: 1 }]);
+    expect(useHistoryStore.getState().entries).toEqual([
+      { id: "hX", timestamp: 1 },
+    ]);
     expect(result.conflicts).toEqual([]);
+    expect(localStorage.getItem("open3dcalc_history_v2")).toBeNull();
   });
 });
 
@@ -673,23 +812,21 @@ describe("importBundle error handling", () => {
 /*  User import compatibility + no-write gate                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Seed every known persisted datum: non-PII into `localStorage`, PII into the
+ * vault-backed stores. The caller must have hydrated the vault FIRST, otherwise
+ * the PII store writes are refused and nothing is persisted — the whole point
+ * of the round-trip tests is that the PII really travelled through the vault.
+ * No leg of this helper writes a PII key to `localStorage`.
+ */
 function seedFromSyncData(data: SyncData): void {
   localStorage.setItem("open3dcalc_settings_v2", JSON.stringify(data.settings));
-  localStorage.setItem(
-    "open3dcalc_history_v2",
-    JSON.stringify({ state: { entries: data.history }, version: 2 }),
-  );
-  localStorage.setItem(
-    "open3dcalc_customers_v1",
-    JSON.stringify({ state: { customers: data.customers }, version: 1 }),
-  );
-  localStorage.setItem(
-    "open3dcalc_quotes_v1",
-    JSON.stringify({
-      state: { quotes: data.quotes, nextNumber: data.quotesNextNumber },
-      version: 1,
-    }),
-  );
+  useHistoryStore.setState({ entries: data.history as never });
+  useCustomerStore.setState({ customers: data.customers as never });
+  useQuoteStore.setState({
+    quotes: data.quotes as never,
+    nextNumber: data.quotesNextNumber ?? 1,
+  });
   localStorage.setItem("open3dcalc_catalog_v1", JSON.stringify(data.catalog));
   localStorage.setItem("open3dcalc_filaments", JSON.stringify(data.filaments));
   localStorage.setItem(
@@ -720,42 +857,78 @@ function importFile(text: string): File {
 }
 
 describe("dataSync user import compatibility and no-write gate", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    fakeIdb = createFakeIndexedDb();
+    localStorage.clear();
+    resetVault();
+    resetPiiStores();
+  });
+
+  afterEach(() => {
+    resetVault();
+    resetPiiStores();
+    localStorage.clear();
+  });
 
   it("round-trips all supported user data in encrypted v1.1 envelopes", async () => {
+    await hydrateVault();
     const fixture = fullRoundTripFixture();
     seedFromSyncData(fixture);
+    await whenPiiWritesSettled();
     const before = collectSyncData();
     const envelope = await createExportEnvelope(before, "synthetic-password");
     localStorage.clear();
+    resetPiiStores();
+    await whenPiiWritesSettled();
 
     const result = await importData(importFile(envelope), {
       password: "synthetic-password",
       mode: "replace",
     });
+    await whenPiiWritesSettled();
 
     expect(result.errors).toBe(0);
-    expect(collectSyncData()).toEqual(before);
-    expect(collectSyncData().settings.futureSetting).toEqual({
+    expect(result.piiRefused).toEqual([]);
+    const after = collectSyncData();
+    expect(after).toEqual(before);
+    // The PII half really came back through the stores — not a vacuous pass
+    // where the import was skipped and the local stores still held the seed.
+    expect(after.history).toEqual(fixture.history);
+    expect(after.customers).toEqual(fixture.customers);
+    expect(after.quotes).toEqual(fixture.quotes);
+    expect(after.settings.futureSetting).toEqual({
       label: "futuro 🔭",
       enabled: true,
     });
+    expect(localStorage.getItem("open3dcalc_history_v2")).toBeNull();
+    expect(localStorage.getItem("open3dcalc_customers_v1")).toBeNull();
+    expect(localStorage.getItem("open3dcalc_quotes_v1")).toBeNull();
   });
 
   it("round-trips legacy encrypted 1.0 bundles while retaining IDs and fields", async () => {
+    await hydrateVault();
     const fixture = fullRoundTripFixture();
     seedFromSyncData(fixture);
+    await whenPiiWritesSettled();
     const before = collectSyncData();
     const legacyBundle = await exportBundle("legacy synthetic password");
     localStorage.clear();
+    resetPiiStores();
+    await whenPiiWritesSettled();
 
     const result = await importData(importFile(JSON.stringify(legacyBundle)), {
       password: "legacy synthetic password",
       mode: "replace",
     });
+    await whenPiiWritesSettled();
 
     expect(result.errors).toBe(0);
-    expect(collectSyncData()).toEqual(before);
+    expect(result.piiRefused).toEqual([]);
+    const after = collectSyncData();
+    expect(after).toEqual(before);
+    expect(after.history).toEqual(fixture.history);
+    expect(after.customers).toEqual(fixture.customers);
+    expect(after.quotes).toEqual(fixture.quotes);
   });
 
   it("exports the current supported empty defaults for optional manifest data", () => {

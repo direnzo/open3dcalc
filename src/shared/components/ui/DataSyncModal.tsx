@@ -451,6 +451,16 @@ function ExportTab({
           </p>
         )}
 
+        {phase === "success" && result && result.piiIncluded === false && (
+          <p
+            role="status"
+            className="flex items-start justify-center gap-2 text-xs text-[var(--color-warning)] leading-relaxed"
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            {t("sync.export.piiExcluded")}
+          </p>
+        )}
+
         {phase === "error" && (
           <p
             role="alert"
@@ -700,6 +710,18 @@ function ImportTab({
             </ul>
           </div>
         )}
+
+        {phase === "success" &&
+          result &&
+          (result.piiRefused?.length ?? 0) > 0 && (
+            <p
+              role="status"
+              className="flex items-start gap-2 text-xs text-[var(--color-warning)] leading-relaxed"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              {t("sync.import.piiRefused")}
+            </p>
+          )}
 
         {phase === "error" && error && (
           <p

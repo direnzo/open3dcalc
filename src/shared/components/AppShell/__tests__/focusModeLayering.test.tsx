@@ -814,6 +814,7 @@ describe("focus mode — a passive surface never buries the exit", () => {
       "src/shared/components/ui/ConfirmDialog.tsx",
       "src/shared/components/ui/ConsentModal.tsx",
       "src/shared/components/ui/DataSyncModal.tsx",
+      "src/shared/components/Privacy/LegacyMigrationDialog.tsx",
       "src/shared/components/ui/PrivacyPolicy.tsx",
       "src/shared/components/Calculator/HistoryTab/HistoryTab.tsx",
       "src/shared/components/Calculator/QuoteSection.tsx",

@@ -66,7 +66,7 @@ consent as **not given** (default-deny, §6).
 - On every load, the app MUST recompute the digest. Mismatch ⇒ the receipt is treated as
   **invalid** ⇒ consent is not given (default-deny) and the user is asked to consent
   again under the current policy. The app never "repairs" a tampered receipt.
-- Note the threat model honestly: a local digest is tamper-*evident*, not tamper-*proof*
+- Note the threat model honestly: a local digest is tamper-_evident_, not tamper-_proof_
   against a fully-compromised device (an attacker with file access can recompute it). It
   protects against accidental mutation, partial writes, and naive edits — the realistic
   risks for a local-first app. Cryptographic non-repudiation is out of scope for D1.
@@ -100,6 +100,112 @@ consents under the current policy.
 over silently. The app compares the receipt's `policy_version`/`policy_hash` to the
 current policy; mismatch ⇒ re-consent required for the delta (new/changed purposes), with
 the old receipt retained as history. The user is shown what changed.
+
+**Policy 1.4 → 1.5 (Beta5 privacy remediation).** The manifest policy content changed, so
+`policy_version` moved from `1.4` to `1.5`. Receipts issued under `1.4` now evaluate as
+`policy_mismatch` and the user is **re-consented**. This is the intended behaviour, not a
+regression. What changed in the policy the user is consenting to:
+
+- `history_entries` and `quote_items` are now declared PII sqlite domain tables.
+  `history_entries` was PII-bearing but absent from the manifest entirely, so it was
+  invisible to the erasure post-condition, which reported "clean" while its rows survived.
+- `open3dcalc_migration_done_v2` is now `pii: true` (its value embeds the full raw
+  pre-migration history array) instead of a non-PII onboarding flag.
+- `open3dcalc_dashboard_v1` is now `pii: false` (it persists only three typed-in
+  numbers; the aggregates it displays are computed in memory and never stored).
+- `appdata_temp_staging` and the new `appdata_diagnostic_backup` declare the real
+  surfaces; the latter discloses that `redact: false` is a straight unredacted copy of
+  the whole database retained for 14 days.
+- `erasure_snapshots` is narrowed to `electron` (the desktop saga uses
+  `diskSnapshotStore` under userData). The genuinely unwritten `idb_reports_staging` and
+  `opfs_export_staging` declarations are removed — neither has a writer anywhere in the
+  codebase. `open3dcalc_erasure_snapshot` is **retained**: it is written by
+  `webSnapshotStore().write()` through `guardedStorage`, so the S1 gate must keep
+  recognizing it.
+
+**Policy 1.5 → 1.6 (declaring `pii_stage`).** `pii_stage` is now a declared PII
+`sqlite_domain_tables` surface. Receipts issued under 1.5 evaluate as
+`policy_mismatch` and the user is re-consented for the delta. What changed in the
+policy the user is consenting to:
+
+- `pii_stage` (Beta5 Wave 1, migration `0004_pii_stage.sql`) is declared. A
+  staged row carries the sealed preimage of a user value mid-re-homing, so the
+  table was PII-bearing from the moment it was created and the inventory simply
+  did not name it — the `history_entries` omission one layer out. Its policy:
+  `encrypted_at_rest`, `sync: never`, `export: diagnostic_only`,
+  `erasure: erase_on_delete_all`, `legal_basis: consent` (so a withdrawal erases
+  it), retention `session_only` / 1 day — the intended ceiling, not an enforced
+  timer, since the state machine discards the row and there is no TTL sweeper.
+
+**Policy 1.6 -> 1.7 (declaring the browser PII vault).** `open3dcalc_pii_vault`
+is now a declared PII `indexeddb` surface. Receipts issued under 1.6 evaluate as
+`policy_mismatch` and the user is re-consented for the delta. What changed in the
+policy the user is consenting to:
+
+- `open3dcalc_pii_vault` (Beta5 Wave 2) is declared. It is the encrypted browser
+  store the three PII keys (`open3dcalc_customers_v1`, `open3dcalc_quotes_v1`,
+  `open3dcalc_history_v2`) are migrated onto as they come off plaintext
+  `localStorage`. Until this declaration the largest PII store in the web build
+  was undeclared: the same class of defect as `pii_stage`, one layer out.
+- Its policy is `encrypted_at_rest` (AES-256-GCM under a passphrase-derived,
+  non-extractable, memory-only key), `sync: never`, `export: never`,
+  `erasure: erase_on_delete_all`, `legal_basis: consent` (so a withdrawal erases
+  it), retention `user_controlled` with no ceiling and **no TTL sweeper**.
+- The vault is unreachable from the sync/export path by construction:
+  `dataSync.ts` reads a fixed list of `localStorage` key literals and never
+  enumerates a store, so a new surface is excluded structurally. Pinned by
+  `src/shared/lib/__tests__/piiVaultDeclaration.test.ts`, which asserts both the
+  behaviour and the shape, because a structural guarantee is exactly what gets
+  broken by one careless enumeration.
+- The three legacy `localStorage` keys keep their existing declarations. This
+  change declares the destination; migrating the stores onto it, and then
+  narrowing those three entries to `sync: never` for the web build, is the
+  follow-on, and it is a second re-consent.
+
+**Policy 1.7 → 1.8 (declaring `legacy_residue`).** `legacy_residue` is now a
+declared PII `sqlite_domain_tables` surface. Receipts issued under 1.7 evaluate as
+`policy_mismatch` and the user is re-consented for the delta. What changed in the
+policy the user is consenting to:
+
+- `legacy_residue` (Beta5 Wave 2, migration `0005_legacy_residue.sql`, ADR-001
+  §3.6) is declared. One row is the pre-remediation at-rest blob for one PII value
+  — an `enc1:safeStorage:<base64>` raw keyring output, or an `enc1:envelope:` v1.1
+  self-asserted-AAD envelope — copied aside byte for byte when §3.6 recovery
+  re-seals that value under the new bound envelope. It is PII-bearing because the
+  blob is a sealed copy of a user value and is the only retained copy after a
+  re-homing, so it must be purgeable and redacted on the same terms as live PII.
+- Its policy is `encrypted_at_rest` (the blob is ciphertext, never plaintext),
+  `sync: never`, `export: diagnostic_only` (only through `db:export` and an
+  unredacted diagnostic backup, which copy the raw file), `erasure:
+erase_on_delete_all`, `legal_basis: consent` (so a withdrawal erases it), and
+  retention `user_controlled` / `max_days: 0` — the approved mode is
+  copy-and-never-delete, so removal is the user's explicit erasure action and there
+  is **no TTL sweeper**.
+- Declaring it is the Wave 0 `history_entries` lesson applied forward: an
+  undeclared PII-bearing table is invisible to the ADR-002 §2.3 scan, the SPEC-02
+  §3 purge, the §6 rescan and the erasure post-condition while holding recovered
+  user data.
+
+**Why this re-consent is free, and why the next one will not be.** Nothing had
+shipped when 1.6 was cut, so no consent receipt issued under 1.5 exists in the
+wild outside a developer's own profile: no real user is interrupted, and the
+delta is a declaration rather than a change in what the app collects. That
+exemption is a property of the release state, not of the process — it is
+recorded here so a later reader does not mistake this bump for a routine one.
+**The same exemption covers 1.7 and 1.8** (the PII vault and `legacy_residue`
+declarations) for the same reason: still nothing shipped, so no receipt issued
+under 1.6 or 1.7 exists outside a developer's own profile. The exemption applies
+only to bumps cut before the first release; the first bump after a release does
+not get it. A
+declared PII surface added _after_ a release costs every user holding a live
+receipt one interrupted re-consent and, until they return, gates PII features
+that depend on consent. Decide the `policy_version` bump when the surface is
+designed, not when the omission is noticed.
+
+- The `version` field of the new `pii_stage` entry is `1.0` and MUST NOT be
+  bumped: the AAD's `S` is a hardcoded constant today, and the day it becomes a
+  per-key manifest lookup a `version` bump re-labels every existing envelope's
+  `S` and strands it. See ADR-001 §3.3 `TODO(hermes)`.
 
 ## 7. What D1.0 does NOT deliver
 

@@ -28,8 +28,24 @@ import {
   adoptSessionPassphrase,
   lockCryptoSession,
 } from "./cryptoCapability.js";
-import { saveGated, loadGated } from "./persistGate.js";
+import {
+  saveGated,
+  gateLoad,
+  readStoredRow,
+  deleteGated,
+} from "./persistGate.js";
+import {
+  buildRecoveryReport,
+  recoverLegacyKey,
+  UnreadablePiiValueError,
+  type RecoveryResult,
+} from "./legacyRecovery.js";
 import { buildScanReport, summarizeReport } from "./legacyScan.js";
+import {
+  PII_DOMAIN_TABLES,
+  PII_LEGACY_PLAINTEXT_TABLES,
+  type PiiDomainTableCounts,
+} from "./piiDomainTables.js";
 import {
   buildQuarantineReport,
   migrateKey,
@@ -233,9 +249,54 @@ function setupIpcHandlers(): void {
         // SPEC-01 manifest — non-PII passes through, PII is decrypted from
         // its ADR-001 capability blob, legacy plaintext stays readable
         // (quarantined in S4), unknown keys return null (default-deny).
-        return await loadGated(db.$client, key);
+        //
+        // A value that exists but cannot be read is REFUSED, not returned as
+        // null: null means "no such key", and a renderer that read it as
+        // empty would write over a row it could not read. `unreadable` is a
+        // distinct answer that carries the main process's reason code across
+        // the boundary.
+        const stored = readStoredRow(db.$client, key);
+        if (stored === null) return null;
+        const outcome = await gateLoad(key, stored);
+        if (outcome.action === "unreadable") {
+          throw new UnreadablePiiValueError(key, outcome.reason);
+        }
+        if (outcome.action === "denied") return null;
+        return outcome.value;
       } catch (error) {
         console.error("[db:load] Error:", error);
+        throw error;
+      }
+    },
+  );
+
+  // ── privacy:recovery-report (ADR-001 §3.6) ──────────────────────────
+  // Which classes of stored data are unavailable, and whether §3.6 recovery
+  // can still be attempted. Metadata only: key NAMES and reason codes, never a
+  // value (§3.2).
+  ipcMain.handle("privacy:recovery-report", async (event) => {
+    try {
+      assertTrustedSender(event);
+      return await buildRecoveryReport(db.$client);
+    } catch (error) {
+      console.error("[privacy:recovery-report] Error:", error);
+      throw error;
+    }
+  });
+
+  // ── privacy:recover-key (ADR-001 §3.6) ──────────────────────────────
+  // copy → re-seal → verify, for one key. Never deletes the legacy blob.
+  ipcMain.handle(
+    "privacy:recover-key",
+    async (event, key: string): Promise<RecoveryResult> => {
+      try {
+        assertTrustedSender(event);
+        if (typeof key !== "string" || key.trim().length === 0) {
+          throw new Error("Key must be a non-empty string");
+        }
+        return await recoverLegacyKey(db.$client, key);
+      } catch (error) {
+        console.error("[privacy:recover-key] Error:", error);
         throw error;
       }
     },
@@ -271,8 +332,11 @@ function setupIpcHandlers(): void {
       if (typeof key !== "string" || key.trim().length === 0) {
         throw new Error("Key must be a non-empty string");
       }
-      const stmt = db.$client.prepare("DELETE FROM storage WHERE key = ?");
-      stmt.run(key);
+      // ADR-002 §2.1 fail-closed at the delete path too. A delete needs no
+      // value, but it needs the classification: with the manifest unloadable no
+      // key can be classified, and an unclassifiable row might be PII. See
+      // `deleteGated`.
+      deleteGated(db.$client, key);
     } catch (error) {
       console.error("[db:delete] Error:", error);
       throw error;
@@ -717,22 +781,35 @@ function runPrivacyScan(): ReturnType<typeof buildScanReport> {
     key: string;
     value: string;
   }>;
-  const countRows = (table: string): number =>
-    (
-      db.$client.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as {
-        c: number;
-      }
-    ).c;
-  const report = buildScanReport(rows, {
-    customers: countRows("customers"),
-    quotes: countRows("quotes"),
-    quote_items: countRows("quote_items"),
-  });
+  // Counts are read for every table in the canonical list — hardcoding the
+  // names here is exactly how `history_entries` went unreported. A table the
+  // profile predates counts as 0, the same "absent is already-empty" rule the
+  // erasure adapters follow: a scan that throws here would take startup down
+  // with it, and a scan report is metadata, not a gate.
+  const countRows = (table: string): number => {
+    try {
+      return (
+        db.$client.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as {
+          c: number;
+        }
+      ).c;
+    } catch {
+      return 0;
+    }
+  };
+  const domainCounts = Object.fromEntries(
+    PII_DOMAIN_TABLES.map((table) => [table, countRows(table)]),
+  ) as PiiDomainTableCounts;
+  const report = buildScanReport(rows, domainCounts);
   const summary = summarizeReport(report);
-  const domainPlaintext =
-    report.domainTables.customers +
-    report.domainTables.quotes +
-    report.domainTables.quote_items;
+  // Only the tables where a row IS plaintext evidence. A `pii_stage` row is
+  // always a sealed envelope, so summing it in would make every in-flight
+  // migration warn "legacy plaintext PII detected" — the same class of lie as
+  // the `history_entries` omission, in the other direction.
+  const domainPlaintext = PII_LEGACY_PLAINTEXT_TABLES.reduce(
+    (total, table) => total + (report.domainTables[table] ?? 0),
+    0,
+  );
   if (report.legacyCount > 0 || domainPlaintext > 0) {
     console.warn(
       `[privacy] legacy plaintext PII detected (ADR-002 §2.2): ${summary}`,

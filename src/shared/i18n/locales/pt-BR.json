@@ -1142,6 +1142,28 @@
       "section8Item4": "Você pode criptografar os pacotes com sua própria senha",
       "section8Lgpd": "Em conformidade com o Art. 18 da LGPD (direito à portabilidade dos dados), você pode exportar seus dados a qualquer momento e importá-los em outro dispositivo."
     },
+    "migration": {
+      "title": "Dados antigos em texto puro",
+      "intro": "Encontramos {{count}} registro(s) de dados pessoais gravados em texto puro por versões anteriores. Nada foi migrado nem apagado: escolha o que fazer.",
+      "optionMigrate": "Migrar para o cofre criptografado",
+      "optionMigrateHint": "Copia os registros para o armazenamento criptografado e mantém a origem em texto puro (nada é apagado).",
+      "optionKeep": "Manter somente leitura",
+      "optionKeepHint": "Não migra nada agora. O dado legado continua em texto puro e permanece divulgado nesta tela.",
+      "optionExport": "Exportar meus dados",
+      "optionExportHint": "Abre o fluxo de exportação existente. Requer o cofre desbloqueado.",
+      "optionDelete": "Eliminar os dados legados",
+      "optionDeleteHint": "Ação destrutiva.",
+      "optionCancel": "Agora não",
+      "working": "Migrando…",
+      "keptReadOnly": "Nada foi migrado. O dado legado permanece em texto puro e continua divulgado na tela de privacidade.",
+      "exportBlocked": "O cofre está bloqueado. Desbloqueie com sua senha para exportar.",
+      "deleteUnavailable": "Eliminação indisponível nesta versão: ainda não existe um apagamento verificado apenas para essas chaves. Nada é apagado silenciosamente.",
+      "resultMigrated": "Migração concluída e verificada. Os registros estão no cofre criptografado; a origem em texto puro foi mantida.",
+      "resultVaultLocked": "Migração recusada: o cofre está bloqueado. Desbloqueie com sua senha e tente novamente. Nada foi escrito.",
+      "resultNothingToMigrate": "Nada a migrar: não há registros legados reconhecíveis.",
+      "resultIncomplete": "A migração não foi concluída nem verificada. Nada foi apagado; tente novamente.",
+      "close": "Fechar"
+    },
     "quarantine": {
       "title": "Quarentena de dados legados",
       "subtitle": "Dados pessoais gravados em texto puro por versões antigas ficam em quarentena: legíveis, mas bloqueados para novas gravações até você escolher migrar (criptografar) ou eliminar.",
@@ -1185,6 +1207,57 @@
       "withdraw": "Retirar consentimento",
       "withdrawConfirm": "Retirar o consentimento? Os dados coletados sob essa permissão serão apagados conforme a política (SPEC-04 §6) e os recursos afetados serão bloqueados.",
       "flagsNote": "Flags de tutorial, onboarding ou banner nunca substituem o consentimento — apenas o recibo conta (SPEC-04 §2)."
+    },
+    "vault": {
+      "ariaLabel": "Dados pessoais bloqueados",
+      "lockedTitle": "Seus dados pessoais estão bloqueados",
+      "lockedMessage": "Clientes, orçamentos e histórico estão criptografados e não carregam sem a sua senha. Nada foi apagado. Enquanto o perfil estiver bloqueado, NOVAS entradas não serão salvas. Desbloqueie para esta sessão para vê-las novamente.",
+      "createTitle": "Crie a senha do seu perfil",
+      "createMessage": "Este perfil ainda não tem senha. Escolha uma para criptografar clientes, orçamentos e histórico neste dispositivo. Ela nunca é gravada e não sai desta sessão.",
+      "passphraseLabel": "Senha do perfil",
+      "passphrasePlaceholder": "Digite a senha",
+      "createPassphrasePlaceholder": "Crie uma senha",
+      "confirmPassphraseLabel": "Confirme a senha",
+      "confirmPassphrasePlaceholder": "Repita a senha",
+      "create": "Criar e desbloquear",
+      "creating": "Criando…",
+      "mismatchError": "As duas senhas não coincidem.",
+      "irrecoverableNotice": "Não há redefinição: se você esquecer esta senha, os dados deste perfil não poderão ser recuperados.",
+      "unlock": "Desbloquear",
+      "unlocking": "Desbloqueando…",
+      "memoryNote": "A senha fica somente na memória desta sessão e nunca é gravada.",
+      "unlockError": "Não foi possível desbloquear.",
+      "unlockErrorDetail": "Motivo: {{reason}}",
+      "unavailableTitle": "Dados pessoais indisponíveis neste ambiente",
+      "unavailableMessage": "Este ambiente não consegue proteger dados pessoais (sem criptografia ou armazenamento seguro), então clientes, orçamentos e histórico não são exibidos nem gravados. Nada foi apagado. NOVAS entradas não serão salvas aqui.",
+      "unavailableDetail": "Motivo: {{reason}}",
+      "writeRefusedTitle": "Entradas novas não foram salvas",
+      "writeRefusedMessage": "Não foi possível salvar em {{area}}: o perfil está bloqueado ou a proteção de dados está indisponível ({{reason}}). A entrada NÃO foi salva e será perdida ao recarregar. Desbloqueie o perfil para salvar.",
+      "writeRefusedAreaUnknown": "dados pessoais"
+    },
+    "residue": {
+      "title": "Dados legados em texto puro",
+      "subtitle": "Transparência sobre o resíduo de dados pessoais gravado em texto puro por versões antigas, o estado do cofre criptografado e o estado da migração. Somente nomes de chave e contagens são mostrados — nunca valores.",
+      "residueHeading": "Resíduo em texto puro",
+      "residueNone": "Nenhum resíduo em texto puro encontrado nas três chaves legadas.",
+      "residueTotal": "{{count}} registro(s) em texto puro no total.",
+      "residueKey": "{{key}} · {{count}} registro(s)",
+      "residueKeptNote": "O texto puro nunca é apagado automaticamente: as chaves acima continuam no armazenamento local até uma eliminação explícita.",
+      "vaultHeading": "Estado do cofre criptografado",
+      "vaultHydrated": "Desbloqueado e hidratado",
+      "vaultLocked": "Bloqueado — informe a senha para acessar",
+      "vaultUnavailable": "Indisponível neste ambiente",
+      "vaultUnavailableDetail": "Motivo: {{reason}}",
+      "rehomeHeading": "Migração para o cofre",
+      "rehomeMigrated": "Migrado para o cofre criptografado (ou nada a migrar)",
+      "rehomePending": "Pendente — há resíduo em texto puro ainda não migrado",
+      "rehomeIncomplete": "Incompleto — uma migração anterior foi interrompida",
+      "historyHeading": "Marcador de migração do histórico",
+      "historyAbsent": "Ausente",
+      "historyComplete": "Concluída",
+      "historyResumable": "Retomável — uma migração interrompida pode ser retomada",
+      "markerNote": "Chave do marcador: {{key}}",
+      "valueFreeNote": "Este painel é informativo e sem valores: exibe apenas nomes de chave, contagens e estados."
     }
   },
   "tooltip": {
@@ -2211,7 +2284,8 @@
       "passwordPlaceholder": "Digite uma senha (opcional)",
       "button": "Exportar Dados",
       "success": "Dados exportados com sucesso",
-      "downloading": "Preparando download..."
+      "downloading": "Preparando download...",
+      "piiExcluded": "Clientes, orçamentos e histórico NÃO foram incluídos: eles são protegidos pelo cofre criptografado e estavam indisponíveis no momento da exportação. Desbloqueie o cofre e exporte novamente para incluí-los."
     },
     "import": {
       "tab": "Importar",
@@ -2233,6 +2307,7 @@
       "importing": "Importando dados...",
       "invalidFile": "Arquivo inválido ou corrompido",
       "wrongPassword": "Senha incorreta",
+      "piiRefused": "Clientes, orçamentos e histórico NÃO foram importados: o cofre criptografado estava bloqueado ou indisponível. Desbloqueie o cofre e importe novamente; nada foi gravado em texto simples.",
       "results": {
         "imported": "{{count}} itens importados",
         "conflicts": "{{count}} conflitos resolvidos",
@@ -2475,5 +2550,35 @@
     "openSource": "Open Source · MIT License",
     "github": "GitHub",
     "telegram": "Canal Telegram"
+  },
+
+  "persistence": {
+    "bridge": {
+      "startupAriaLabel": "Falha ao abrir o armazenamento local",
+      "startupTitle": "Não foi possível abrir o armazenamento local",
+      "startupMessage": "O aplicativo não iniciou porque a camada de persistência recusou a operação. Nada foi apagado: os seus dados continuam onde estavam e você pode fechar o aplicativo com segurança.",
+      "startupDetail": "Motivo informado pela camada de persistência: {{reason}}",
+      "retry": "Tentar novamente",
+      "runtimeAriaLabel": "Armazenamento local indisponível",
+      "runtimeTitle": "As alterações não estão sendo salvas",
+      "dismiss": "Dispensar aviso"
+    },
+    "recovery": {
+      "ariaLabel": "Não foi possível abrir alguns dados armazenados",
+      "title": "Não foi possível abrir alguns dos seus dados",
+      "message": "Estas partes do seu perfil estão armazenadas, mas não puderam ser descriptografadas, então não são exibidas agora. Nada foi apagado — os dados continuam no disco, e o restante do seu perfil está funcionando normalmente.",
+      "detail": "Indisponível: {{reason}}",
+      "recoverable": "Pode ser recuperado",
+      "unrecoverable": "Não pode ser recuperado",
+      "recoverAction": "Recuperar agora",
+      "recovered": "Recuperado e verificado. A cópia original foi mantida como backup.",
+      "recoverFailed": "Não foi possível recuperar estes dados. Nada foi alterado e a cópia original está intacta."
+    },
+    "manifestUnavailable": {
+      "ariaLabel": "Dados salvos indisponíveis",
+      "title": "Seus dados salvos estão indisponíveis",
+      "message": "O aplicativo não conseguiu ler o manifesto de classificação de dados, então nenhuma parte do seu perfil salvo pode ser aberta agora. Nada está sendo gravado ou apagado — seus dados continuam no disco e voltarão quando o manifesto estiver disponível novamente.",
+      "detail": "Motivo: {{reason}}"
+    }
   }
 }

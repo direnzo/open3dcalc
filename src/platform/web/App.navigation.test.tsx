@@ -12,6 +12,12 @@ vi.mock("@/shared/components/DemoMode/DemoExportBlockedToast", () => ({
 vi.mock("@/shared/components/ui/PrivacyBanner", () => ({
   PrivacyBanner: () => null,
 }));
+vi.mock("@/shared/components/ui/ConsentModal", () => ({
+  ConsentModal: () => null,
+}));
+vi.mock("@/shared/components/Privacy/LegacyMigrationPrompt", () => ({
+  LegacyMigrationPrompt: () => null,
+}));
 vi.mock("@/shared/components/ui/Tutorial", () => ({ Tutorial: () => null }));
 vi.mock("@/shared/hooks/useAppInit", () => ({ useAppInit: vi.fn() }));
 vi.mock("@/shared/components/AppShell/AppShell", () => ({

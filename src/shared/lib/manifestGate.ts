@@ -102,6 +102,40 @@ export function isKeyAllowed(key: string): boolean {
   return false;
 }
 
+/**
+ * Whether the manifest declares `key` as carrying PII (`pii: true`).
+ *
+ * Non-throwing and fail-closed on an unknown key or an unloadable manifest:
+ * only an entry that positively says `pii: true` returns true. This is the
+ * predicate the sync write guard composes with the key allowlist, so a
+ * declared PII key can never be placed on a plaintext surface while every
+ * non-PII key keeps its current behaviour. Reads the key NAME only.
+ */
+export function isPiiKey(key: string): boolean {
+  const index = ensureLoaded();
+  return index?.get(key)?.pii === true;
+}
+
+/**
+ * Whether the manifest ITSELF could not be loaded, so the gate is denying
+ * every key (fail-closed).
+ *
+ * This is deliberately not `!isKeyAllowed(k)`: that is true for a key the
+ * manifest loaded and simply does not declare, which is a different fact with
+ * different consequences. A caller that DELETES (the bridge's stale-key sweep)
+ * or that decides how to surface a refusal must tell "this key is denied" from
+ * "no key could be classified at all" — the two are indistinguishable from the
+ * per-key boolean, and reading them as one is what turned an unloadable
+ * manifest into the deletion of every stored row.
+ *
+ * Triggers the lazy load for the same reason `isKeyAllowed` does: a caller must
+ * not have to know that the flag is only ever set by a first lookup.
+ */
+export function isManifestUnavailable(): boolean {
+  ensureLoaded();
+  return loadFailed;
+}
+
 /** Test-only reset: inject a document, or null to simulate load failure. */
 export function resetManifestForTests(
   doc: ManifestDocument | null | undefined,

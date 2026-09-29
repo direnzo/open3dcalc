@@ -1,6 +1,8 @@
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PiiWriteRefusalNotice } from "@/shared/components/Privacy/PiiWriteRefusalNotice";
+import { PII_STORE_KEY } from "@/shared/lib/crypto/piiStoreHydration";
 import { ExportActionsCard } from "./ExportActionsCard";
 import { HistoryCard } from "./HistoryCard";
 import { InventoryDeductionCard } from "./InventoryDeductionCard";
@@ -37,8 +39,18 @@ export function ResultsActions({
         data-testid="action-group-save"
         className="min-w-0 space-y-3"
       >
+        {/*
+         * H-4: the calculator is the main place a history entry is created, so
+         * its refusal (a locked/incapable vault) must be visible here, next to
+         * the "add to history" control. Scoped to the history store so the PII
+         * tabs' own notices (customers/quotes) are never duplicated here.
+         */}
+        <PiiWriteRefusalNotice storeKey={PII_STORE_KEY.history} />
         <div>
-          <h2 id={saveHeadingId} className="text-sm font-bold text-[var(--text-primary)]">
+          <h2
+            id={saveHeadingId}
+            className="text-sm font-bold text-[var(--text-primary)]"
+          >
             {t("results.saveAndRegister")}
           </h2>
           <p className="mt-1 text-xs text-[var(--text-muted)]">
@@ -61,7 +73,10 @@ export function ResultsActions({
         className="min-w-0 space-y-3 border-t border-[var(--border-subtle)] pt-5"
       >
         <div>
-          <h2 id={exportHeadingId} className="text-sm font-bold text-[var(--text-primary)]">
+          <h2
+            id={exportHeadingId}
+            className="text-sm font-bold text-[var(--text-primary)]"
+          >
             {t("results.exportAndShare")}
           </h2>
           <p className="mt-1 text-xs text-[var(--text-muted)]">
@@ -81,7 +96,10 @@ export function ResultsActions({
           className="min-w-0 space-y-3 border-t-4 border-[var(--border-default)] pt-5"
         >
           <div>
-            <h2 id={inventoryHeadingId} className="text-sm font-bold text-[var(--text-primary)]">
+            <h2
+              id={inventoryHeadingId}
+              className="text-sm font-bold text-[var(--text-primary)]"
+            >
               {t("results.inventory")}
             </h2>
             <p className="mt-1 text-xs text-[var(--text-muted)]">

@@ -4,7 +4,9 @@
  * Storage strategy:
  *   - Electron: localStorage (renderer) ↔ SQLite `storage` table (durable)
  *     The persistence-bridge handles the sync automatically for all
- *     `open3dcalc_*` keys on startup, beforeunload, and every 30 s.
+ *     `open3dcalc_*` keys on startup, on beforeunload, and on a periodic
+ *     timer — see `AUTO_SAVE_INTERVAL_MS` in `persistence-bridge.ts` for the
+ *     interval, rather than a number repeated here that can drift from it.
  *   - Browser dev mode: localStorage only (no Electron IPC).
  *
  * The renderer always reads/writes localStorage first (synchronous),

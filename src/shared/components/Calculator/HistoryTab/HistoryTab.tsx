@@ -2,6 +2,11 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useHistoryStore } from "@/shared/stores/historyStore";
 import { useCalculatorStore } from "@/shared/stores/calculatorStore";
+import {
+  PII_STORE_KEY,
+  beginPiiSurfaceWrite,
+} from "@/shared/lib/crypto/piiStoreHydration";
+import { PiiWriteRefusalNotice } from "@/shared/components/Privacy/PiiWriteRefusalNotice";
 import { ConfirmDialog } from "@/shared/components/ui/ConfirmDialog";
 import { ComparisonModal } from "@/shared/components/ui/ComparisonModal";
 import { useCurrency } from "@/shared/hooks/useCurrency";
@@ -276,6 +281,12 @@ export function HistoryTab({ onLoadToCalculator }: HistoryTabProps) {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // H-4: a locked/unavailable vault refuses the import at persistence; block
+    // it here so the import reports a refusal instead of appearing to succeed.
+    if (beginPiiSurfaceWrite(PII_STORE_KEY.history) !== null) {
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
@@ -331,6 +342,8 @@ export function HistoryTab({ onLoadToCalculator }: HistoryTabProps) {
       <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 border-b border-[var(--color-border)] pb-2">
         {t("history.title")}
       </h2>
+
+      <PiiWriteRefusalNotice storeKey={PII_STORE_KEY.history} />
 
       {/* Filter type tabs + actions */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap mb-4">

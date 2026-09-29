@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { manifestStorage } from "@/shared/lib/manifestStorage";
+import {
+  gatedPiiPersistStorage,
+  registerPiiPersistStore,
+} from "@/shared/lib/crypto/piiStoreHydration";
 import type { Quote, QuoteItem, QuoteFormData } from "@/shared/types";
 
 function generateId(): string {
@@ -212,7 +215,13 @@ export const useQuoteStore = create<QuoteStore>()(
     {
       name: "open3dcalc_quotes_v1",
       version: 1,
-      storage: manifestStorage(),
+      storage: gatedPiiPersistStorage<QuoteStore>("open3dcalc_quotes_v1"),
+      // See customerStore: hydration waits for `rehydratePiiStores()` after
+      // unlock, so a locked store never persists its initial state over real
+      // quotes.
+      skipHydration: true,
     },
   ),
 );
+
+registerPiiPersistStore("open3dcalc_quotes_v1", useQuoteStore.persist);

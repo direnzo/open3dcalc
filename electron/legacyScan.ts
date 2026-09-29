@@ -13,6 +13,10 @@
 
 import { getEntry, isKnownKey } from "../src/shared/lib/dataManifest.js";
 import { loadManifestFromDisk } from "./manifestSource.js";
+import {
+  PII_DOMAIN_TABLES,
+  type PiiDomainTableCounts,
+} from "./piiDomainTables.js";
 
 const ENCRYPTED_PREFIX = "enc1:";
 
@@ -33,7 +37,7 @@ export interface ScanReport {
   legacyCount: number;
   encryptedCount: number;
   /** Row counts of the SQLite domain tables (any row there is plaintext today). */
-  domainTables: { customers: number; quotes: number; quote_items: number };
+  domainTables: PiiDomainTableCounts;
   manifestAvailable: boolean;
 }
 
@@ -84,7 +88,7 @@ export function scanStorageRows(
 /** Build the full report from storage rows + domain-table row counts. */
 export function buildScanReport(
   rows: Array<{ key: string; value: string }>,
-  domainCounts: { customers: number; quotes: number; quote_items: number },
+  domainCounts: PiiDomainTableCounts,
 ): ScanReport {
   const entries = scanStorageRows(rows);
   let manifestAvailable = true;
@@ -106,10 +110,15 @@ export function buildScanReport(
 
 /** Startup log summary — metadata only (TEST-MATRIX §3.2: no values). */
 export function summarizeReport(report: ScanReport): string {
+  // Every declared PII domain table is named, so a newly added table cannot go
+  // unreported (the `history_entries` omission was exactly that failure).
+  const domainSummary = PII_DOMAIN_TABLES.map(
+    (table) => `${table}=${report.domainTables[table]}`,
+  ).join(",");
   const parts = [
     `legacy=${report.legacyCount}`,
     `encrypted=${report.encryptedCount}`,
-    `domainTables(customers=${report.domainTables.customers},quotes=${report.domainTables.quotes},quote_items=${report.domainTables.quote_items})`,
+    `domainTables(${domainSummary})`,
   ];
   if (report.legacyCount > 0) {
     const legacyKeys = report.entries

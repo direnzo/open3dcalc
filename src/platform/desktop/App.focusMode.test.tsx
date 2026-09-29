@@ -42,8 +42,15 @@ vi.mock("@/shared/components/DemoMode/DemoModeIndicator", () => ({
 vi.mock("@/shared/components/DemoMode/DemoExportBlockedToast", () => ({
   DemoExportBlockedToast: () => <div data-testid="demo-toast" />,
 }));
+vi.mock("@/shared/components/ui/ConsentModal", () => ({
+  ConsentModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="consent-modal" /> : null,
+}));
 vi.mock("@/shared/components/ui/PrivacyBanner", () => ({
   PrivacyBanner: () => <div data-testid="privacy-banner" />,
+}));
+vi.mock("@/shared/components/Privacy/LegacyMigrationPrompt", () => ({
+  LegacyMigrationPrompt: () => <div data-testid="legacy-migration-prompt" />,
 }));
 vi.mock("@/shared/components/ui/Tutorial", () => ({
   Tutorial: () => <div data-testid="tutorial" />,
@@ -154,17 +161,19 @@ describe("desktop App — Focus Mode chrome", () => {
     expect(container.querySelector(GITHUB_LINK)).toBeNull();
   });
 
-  it("keeps the update notice, the indicators, the banner and the tutorial", () => {
+  it("keeps the update notice, the indicators, the privacy surface and the tutorial", () => {
     // A pending desktop update must never be hidden by a focus state — same
     // reasoning as the web side, and the reason UpdateNotification stayed
-    // outside the conditional in the App.
+    // outside the conditional in the App. First use has no consent yet, so the
+    // ConsentModal is the privacy surface that must survive.
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "focusMode.enter" }));
 
     expect(screen.getByTestId("update-notification")).toBeInTheDocument();
     expect(screen.getByTestId("demo-indicator")).toBeInTheDocument();
     expect(screen.getByTestId("demo-toast")).toBeInTheDocument();
-    expect(screen.getByTestId("privacy-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("consent-modal")).toBeInTheDocument();
+    expect(screen.getByTestId("legacy-migration-prompt")).toBeInTheDocument();
     expect(screen.getByTestId("tutorial")).toBeInTheDocument();
   });
 

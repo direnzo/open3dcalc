@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { manifestStorage } from "@/shared/lib/manifestStorage";
+import {
+  gatedPiiPersistStorage,
+  registerPiiPersistStore,
+} from "@/shared/lib/crypto/piiStoreHydration";
 import type { Customer, CustomerFormData } from "@/shared/types";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -197,7 +200,15 @@ export const useCustomerStore = create<CustomerStore>()(
     {
       name: "open3dcalc_customers_v1",
       version: 1,
-      storage: manifestStorage(),
+      storage: gatedPiiPersistStorage<CustomerStore>("open3dcalc_customers_v1"),
+      // The vault is sealed and locked at store creation. Hydrating here would
+      // read a locked vault (refused) and leave the store writable at its
+      // initial, empty state — which its first `set()` would persist over the
+      // user's real customers. Hydration is explicit, after unlock:
+      // `rehydratePiiStores()`.
+      skipHydration: true,
     },
   ),
 );
+
+registerPiiPersistStore("open3dcalc_customers_v1", useCustomerStore.persist);

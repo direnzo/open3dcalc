@@ -1599,6 +1599,52 @@ Todos os cinco pares passam AA. O nome do token de tinta (`--color-text-inverse`
 - **Consequência:** o próximo agente, ou a próxima sessão, vai ler a nota e não terá como confirmar se ela ainda vale. A autoridade de uma decisão que só existe no chat expira com o chat.
 - [ ] O dono precisa fechá-la em arquivo. Até lá, a nota na Phase 7i é a única fonte, e qualquer agente que trabalhar por ela deve dizer que está lendo uma fonte sem lastro.
 
+#### 6. As quatro decisões do dono — 30/09/2026
+
+> **O que esta seção é.** As respostas dos itens 1, 2 e 3 acima, mais uma decisão de infraestrutura que nunca foi item de fase nenhuma. As quatro foram tomadas pelo dono em 30/09/2026 e estão aqui **em arquivo** — que era precisamente o item 5 desta fase. Cada uma fecha um item aberto, e cada uma registra o que **custa**: um escopo mais estreito só é decisão se o que ficou de fora também estiver escrito.
+
+**a) A IA fica fora da V2.0 — a `v2-no-ai` continua vigente.**
+
+- [x] **`v2-no-ai` (22/09/2026) não é revogada.** O item 2 acima registra uma contradição que não estava no código, estava no pedido: "tudo do `Example/`" contra uma decisão vigente. Ela não precisa de revogação nenhuma, porque a decisão não mudou — o escopo sim.
+- **O que sai, medido:** `Example/src/components/AIAssistantModal.tsx`, **685 linhas**, e os **3 endpoints Gemini** de `Example/server.ts` — `POST /api/ai/analyze-piece` (`:37`), `POST /api/ai/generate-pitch` (`:80`) e `POST /api/ai/estimate-photo` (`:130`), todos em `model: "gemini-3.8-flash"` (`:64`, `:114`, `:172`).
+- **O que a decisão compra:** sem chave de API, sem custo por chamada e sem superfície de segurança nova. Vale registrar que o protótipo **tem** essa superfície e o app não: `GET /api/health` (`:32-33`) já responde `geminiConfigured: !!process.env.GEMINI_API_KEY`, enquanto o app declara que **não faz nenhuma chamada de rede** (`PrinterProfile.websiteUrl`, `types/index.ts:56`).
+- **O bug de release do protótipo tem dono agora.** `analysisError` é declarado (`:53`) e renderizado (`:327`) mas **nunca setado** no `catch` (`:105-111`): a simulação mock é entregue como se fosse análise real. Se a IA voltar, esse caminho não porta — e a decisão de hoje é o que impede que ele entre por descuido.
+
+**b) O modelo de frota fica fora desta fase — as três telas são adiadas.**
+
+- [x] **A alternativa (b) do item 3 foi escolhida:** registrar aqui, portar em versão posterior. **Nenhuma mudança de schema nesta fase.** `PrinterProfile` (`types/index.ts:36-58`) continua como está — verificado no código em 30/09/2026, o tipo **não tem** `acquisitionDate`, **não tem** `status` e **não tem** log de horas.
+- **O que fica adiado, com o peso medido:** `PrinterFleetManagementView` (**512**), `PrinterRoiBreakEvenCard` (**412**) e `PrinterHealthScoreCard` (**439**), os três em `Example/src/components/` — **1.363 linhas somadas**.
+- **A perda é menor do que a contagem de linhas sugere, e vale dizer por quê.** ROI por impressora **já está coberto** pelo `ProfitAnalyticsModule` entregue em 7p.1, montado no `Dashboard.tsx:743`, com visão por impressora, 4 KPIs e barras em CSS puro. O que adia é a **gestão de frota** e os dois cards especializados — não a pergunta "esta impressora está dando dinheiro", que a tela já responde. O ganho perdido é o das três telas, não o da métrica.
+- **A divergência silenciosa do item 3 não foi fechada por esta decisão, e isso precisa ficar escrito.** Ela nasce de **reprecificar** uma impressora no catálogo e continua valendo tal como está descrita acima: as quatro telas leem o valor antigo, sem erro e sem aviso. Adiar as três telas **não a corrige** — só evita que a Phase 7p a herde. O item 3 **continua aberto**.
+
+**c) O vínculo cliente↔job permanece no `Quote` — `HistoryEntry` não ganha `clientId`.**
+
+- [x] **A segunda alternativa do item 1 foi escolhida:** manter o histórico agnóstico e cruzar por `historyEntryId` na leitura. **Zero mudança de domínio**, zero mudança de snapshot, zero retrocompatibilidade a resolver. `HistoryEntry` (`types/index.ts:310-321`) segue sem campo de cliente — verificado no código em 30/09/2026.
+- **O caminho da junção, que já existe:** `Quote.items[].historyEntryId` (`quoteStore.ts:68`) → `Quote.customerId`. É a relação que os gráficos da Phase 7p consomem.
+- **A consequência, registrada sem suavizar: um job sem orçamento não mostra cliente.** É o preço da opção mais barata, e é exatamente por isso que **o protótipo não pode ser portado neste ponto** — o `Example/` lê `clientName` como campo direto, e não existe como preencher honestamente uma coluna a partir de um vínculo que pode não existir.
+- **A opção (a) continua registrada como a mais completa.** Se um dia a Phase 7p precisar de receita por cliente em granularidade que a junção na borda não dê, o campo volta — com retrocompatibilidade de snapshot (ausente = sem cliente). Decidir isso hoje seria decidir sem medição.
+
+**d) `testTimeout: 10s` no `vitest.config.ts` — margem honesta, não correção de flake.**
+
+- [x] **Entregue em 30/09/2026 no PR #251, commit `90de2d0`, num único arquivo:** `vitest.config.ts`, **+27 linhas, das quais 26 são comentário**. O valor é `testTimeout: 10_000`.
+- **O que era antes: nada.** `testTimeout` não estava configurado em nenhum arquivo deste repositório — a varredura repo-wide dos knobs de timeout e de worker não devolve nenhuma ocorrência fora desta mudança. O orçamento era o **default do vitest para o pool forks, 5.000ms**, e ninguém tinha escrito isso em lugar nenhum.
+- **A medição que justifica o número:** os 8 arquivos da família Electron/segredo — `electron/__tests__/{cryptoCapability,legacyRecovery,legacyScan,osKeyring,persistGate,piiDomainTables,piiStage,piiStageResidue}.test.ts` — têm o teste mais lento entre **2.564ms e 3.331ms**, ou seja **51% a 67%** do orçamento de 5s. Com 10s a mesma faixa cai para **~26% a ~33%**. A margem passa de 1,5×–2× para ~3×, acima do piso de 2× que a própria configuração registra.
+- **Por que isto é margem e não correção.** A flake reportada **não reproduziu em 5 rodadas** com carga baixa (load 2,99). A alteração **não elimina nada**: ela remove um orçamento **implícito** e **torna visível** um número que hoje ninguém tem de ler. Afirmar o contrário seria declarar uma correção que não foi medida.
+- **O teste mais lento da suíte não é evidência de risco, e é bom registrar por quê.** `crypto.selftest.test.ts` roda `runSelftest()` **síncrono** a 6.781ms, e o call site já declara o próprio orçamento de `180_000ms` (`:277`). Teste síncrono não é interrompido pelo timeout do vitest.
+- **`hookTimeout` e `teardownTimeout` ficaram de fora de propósito.** A família Electron não registra `beforeAll`/`afterAll` — o trabalho lento está no corpo dos testes — e teardown não é ponto quente. Configurar um knob sem consumidor é ruído.
+- **Ver a issue upstream `vitest-dev/vitest#9751`** — _"Unify and simplify timeout configuration"_, aberta em 26/02/2026. Ela documenta que esses knobs vivem espalhados entre `testTimeout`, `expect.poll.timeout` e `browser.providerOptions.actionTimeout`, sem um lugar único de raciocínio, e é a razão de o bloco estar centralizado e comentado num só ponto deste repositório. **O bug de testes concorrentes discutido lá — `_currentTaskStartTime` / `_currentTaskTimeout` armazenados no runner singleton — não afeta este repositório:** zero usos de `test.concurrent` / `describe.concurrent` / `it.concurrent` em `src/` e `electron/`, verificado em 30/09/2026.
+- [ ] **O portão desta entrega é o do CI, não o de um rodízio local.** Na `main` mergeada: **293 arquivos / 4.105 testes verdes**, `typecheck` e `lint` limpos. Nenhuma rodada extra foi feita para provar o que já está provado — a flake não reproduz.
+
+**Como estas decisões se posicionam contra os acceptance criteria da fase.** A lista abaixo é **preservada na íntegra e não foi reescrita**: esta entrada é aditiva, e reescrever um critério para marcá-lo como cumprido apagaria o texto que o definia. O que mudou é o estado, e ele fica aqui:
+
+| Acceptance criterion                                                                                  | Estado em 30/09/2026                                                                                                 |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| As cinco decisões têm resposta do dono, registrada em arquivo                                         | ⚠️ **três de cinco** — itens 1, 2 e 3 respondidos; 4 e 5 seguem abertos                                              |
+| A `v2-no-ai` está revogada **ou** a IA está declarada fora do port                                    | ✅ **cumprida pela segunda via** — declarada fora do port, `v2-no-ai` não revogada                                   |
+| A Phase 7d descreve `usefulLife` na mesma unidade do código                                           | ❌ **aberta** — é o item 4, que esta entrada não toca                                                                |
+| A divergência silenciosa da frota está fechada ou as telas estão fora do escopo até existir instância | ⚠️ **pela metade** — as três telas estão explicitamente fora do escopo; a divergência em si continua aberta (item 3) |
+| Nenhum agente implementa decisão de domínio com base em premissa não registrada                       | ⚠️ **reforçada, não fechada** — vale a partir de agora, mas o item 5 é estrutural                                    |
+
 **Acceptance criteria desta fase:**
 
 - [ ] As cinco decisões têm resposta do dono, registrada em arquivo — não em conversa.

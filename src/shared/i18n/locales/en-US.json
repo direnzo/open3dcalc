@@ -640,7 +640,42 @@
     "noResults": "No results found",
     "dateFrom": "Start date",
     "dateTo": "End date",
-    "clearFilters": "Clear filters"
+    "clearFilters": "Clear filters",
+    "aggregates": {
+      "weight": {
+        "light": "Light (up to 50 g)",
+        "medium": "Medium (50-150 g)",
+        "heavy": "Heavy (150-300 g)",
+        "bulk": "Bulk (over 300 g)"
+      },
+      "printerUnknown": "Unknown printer"
+    },
+    "analytics": {
+      "title": "Profitability Analysis",
+      "subtitle": "Margin by material and by machine",
+      "scopeFiltered": "{{count}} {{label}} in the selected period",
+      "tabsLabel": "Profitability grouping",
+      "tabMaterial": "By material",
+      "tabPrinter": "By printer",
+      "kpiTopMaterial": "Most profitable material",
+      "kpiTopPrinter": "Most profitable printer",
+      "kpiWeightedMargin": "Revenue-weighted margin",
+      "kpiWeightedMarginNote": "Sum of profit divided by sum of revenue",
+      "kpiAvgPerHour": "Average return per hour",
+      "groupMaterial": "Profitability by material",
+      "groupPrinter": "Profitability by printer",
+      "rowRevenue": "Revenue",
+      "rowProfit": "Profit",
+      "rowMargin": "Margin",
+      "rowPerHour": "Profit/h",
+      "rowHours": "Hours",
+      "jobCount_one": "{{count}} job",
+      "jobCount_other": "{{count}} jobs",
+      "orphanCount_one": "{{count}} entry without material is not in this view",
+      "orphanCount_other": "{{count}} entries without material are not in this view",
+      "barLegendMaterial": "Bar: each material's margin relative to the best in the group",
+      "barLegendPrinter": "Bar: each printer's profit per hour relative to the best in the group"
+    }
   },
   "breakdown": {
     "title": "Cost Breakdown",

@@ -62,6 +62,49 @@
     "more": "Mais",
     "resources": "Recursos"
   },
+  "utilityBar": {
+    "label": "Preferências de exibição"
+  },
+  "breadcrumb": {
+    "label": "Trilha de navegação",
+    "root": "Oficina 3D",
+    "calculator": {
+      "description": "Custo, preço e lucro da peça"
+    },
+    "dashboard": {
+      "description": "Produção, custos e lucro"
+    },
+    "history": {
+      "description": "Cada impressão salva e comparável"
+    },
+    "catalog": {
+      "description": "Máquinas, materiais e marketplaces"
+    },
+    "inventory": {
+      "description": "Estoque de filamentos"
+    },
+    "infill": {
+      "description": "Peso, custo e tempo por infill"
+    },
+    "quotes": {
+      "description": "Orçamentos para clientes"
+    },
+    "customers": {
+      "description": "Seus clientes e contatos"
+    },
+    "products": {
+      "description": "Produtos à venda"
+    },
+    "privacy": {
+      "description": "Seus dados, no seu navegador"
+    },
+    "wiki": {
+      "description": "Guia e documentação"
+    },
+    "changelog": {
+      "description": "O que mudou em cada versão"
+    }
+  },
   "dashboard": {
     "totalCost": "Custo Total",
     "salePrice": "Preço de Venda",
@@ -804,7 +847,18 @@
     "distributionMore_one": "Mais {{count}} parcela na composição.",
     "distributionMore_other": "Mais {{count}} parcelas na composição.",
     "distributionDetails": "Ver composição granular",
-    "distributionDetailsDescription": "Barras e gráfico completo"
+    "distributionDetailsDescription": "Barras e gráfico completo",
+    "sidebar": {
+      "modeLabel": "Layout da barra",
+      "compact": "Compacto",
+      "tabs": "Abas",
+      "dock": "Dock",
+      "expanded": "Expandido",
+      "viewLabel": "Visualização dos resultados",
+      "chart": "Gráfico",
+      "bars": "Barras",
+      "actions": "Ações"
+    }
   },
   "tutorial": {
     "start": "Iniciar Tutorial",

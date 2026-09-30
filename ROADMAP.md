@@ -1471,6 +1471,55 @@ O `Example/` traz **números inventados que produziriam gráficos mentirosos**. 
 - [ ] Os componentes têm testes RTL, cobertura ≥80%, i18n pt-BR/en-US e WCAG AA — inclusive o overlay, que exige portal, focus-trap, `Escape` e `aria-modal` que o protótipo não tem.
 - [ ] `RechartsLazy` exporta `ComposedChart` e `Line` antes do primeiro gráfico que os usa, e o bundle não carrega a biblioteca de gráficos para quem não vê nenhum.
 
+#### 7p.1 — Entrega de `useHistoryAggregates` e `ProfitAnalyticsModule` — ✅ em `11a3695` (PR #249)
+
+**Fechados os itens 1 e 2 da tabela de ordem acima, em 30/09/2026 (PR #249, commit `11a3695`, squash).** Os itens 3 a 7 seguem abertos, sem alteração por esta entrega. O que segue registra o entregue, as decisões que o acompanharam e o que ficou pendente; as justificativas já escritas em **A1** e **A2** são referenciadas, não repetidas.
+
+**`useHistoryAggregates` — entregue.** `src/shared/hooks/useHistoryAggregates.ts`, 620 linhas, 3 suites de teste.
+
+- [x] As quatro funções puras exportadas — `byMonth`, `byQuarter`, `byMaterial`, `byPrinter` — e um envelope memoizado que as compõe para o consumo por componente. As puras **não tocam store, React, JSX nem i18n**: recebem `HistoryEntry[]` e devolvem dados, e é isso que as torna verificáveis sem provider.
+- [x] Sem dados, `null` — nunca `0`, como a regra da fase exige.
+- [x] Cobertos os casos de borda da fase: entradas sem `snapshot` (`entry.snapshot` é `| null`), entradas antigas sem `profitPerHour` e sem `totalHoursForProfit`, com `?? estimatedPrintTime`.
+
+**🔒 Regra de unidade aplicada: somar como está, sem multiplicar por `quantity`.** `calculatorStore.compute.ts:104-129` reescreve `sellPrice`, `totalCost`, `profit` e `costPerUnit` para **por unidade** quando `quantity > 1`, e `HistoryEntry` não tem campo de lote — o histórico guarda o valor unitário, e somar é exatamente o que o app já mostra ao usuário. Peso também **sem** multiplicar: se as moedas são por unidade e os gramas por lote, `profitPerHour` por grama sai **inflado em 10×**. As **razões** — margem, preço/grama, ROI — são invariantes à escolha; só os **totais** mudam. Argumento completo em **A1**.
+
+**Correção do próprio roadmap, agora refletida no código entregue.** A versão anterior deste documento afirmava que o protótipo multiplica **dinheiro** por `quantity`. **Não multiplica** — das 50 ocorrências de `quantity` em `Example/src`, nenhuma é dinheiro: são peso e contagem de unidades. O modelo do protótipo é **lote** e o do app é **unitário**, de modo que o risco real de um port é **sub-contar**, não super-contar. Ver **A1**.
+
+**Três hazards evitados na implementação.** O terceiro já estava registrado em A2; os dois primeiros não.
+
+- **`getPrinter()` tem fallback silencioso.** `printers.ts:1349-1351` faz `?? printers[0]`, e `printers[0]` é a Bambu A1 Mini: um id desconhecido agruparia os números de uma máquina sob o nome de outra, sem erro visível. Registrado no JSDoc de `useHistoryAggregates.ts:525-526`.
+- **A união de 23 `MaterialType` não é aplicada em lugar nenhum.** `MaterialStateFDM.type` e `MaterialStateResin.type` são `string`, e os ids de resina entram por `as unknown as MaterialType` (`materials.ts:30-37`) — uma grade fixa de 23 linhas **descartaria toda a resina, em silêncio**.
+- **O dataset de demo grava nomes de exibição, não ids** (`"PLA"`, `"Water Washable"`), e `"PLA"` ≠ `pla`. Por isso as linhas são derivadas das entradas presentes, com key normalizada.
+
+**`ProfitAnalyticsModule` — entregue.** `src/shared/components/Dashboard/ProfitAnalyticsModule.tsx`, 20 testes.
+
+- [x] Duas visões — material e impressora — e 4 KPIs, com as barras em **CSS puro**: **zero Recharts e zero cor hex**, ambos verificados por teste e não por leitura.
+- [x] Montado no `Dashboard` em `Dashboard.tsx:743`, recebendo `entries={filteredEntries}` — o mesmo conjunto filtrado que o resto da tela já consome.
+- [x] Cobertura do componente: **98,24%** statements (56/57), **93,33%** branch (42/45), **100%** functions (26/26), 100% lines.
+
+**Duas decisões de integridade, ambas sobre o número que a tela mostra:**
+
+- [x] **O KPI de margem declara o método** — "ponderada por receita" — porque `Dashboard.tsx:160-166` já exibe "Margem Média" como média **aritmética** das margens por entrada (`reduce((a, b) => a + b, 0) / margins.length`). Sem o rótulo do método, a mesma tela mostraria dois números diferentes com o mesmo nome.
+- [x] **A escala das barras é relativa ao melhor do conjunto nos dois modos.** O protótipo usava margem **absoluta** na visão de material e escala relativa ao **máximo** na de impressora, rotulando as duas como "relativas".
+
+**Limitações conhecidas, registradas e não suavizadas:**
+
+- [ ] **O padrão de `tablist` copiado de `ResultsSidebar.tsx:138-183` não implementa navegação por setas nem _roving tabindex_,** como o padrão APG exige. A semântica (`tablist` / `tab` / `tabpanel`, com `aria-controls` e `aria-labelledby`) está correta; o comportamento de teclado é herança do original, não um padrão novo.
+- [ ] **jsdom normaliza cor de `style` inline:** `style={{color:"#ff0000"}}` serializa como `rgb(255,0,0)` e **escapa** da verificação de hex. A forma realista em Tailwind, `text-[#ff0000]`, **é** pega. O guard de zero-hex não tem alcance total.
+- [ ] **Existem três fontes de agregação de impressoras:** `topPrintersData` (`Dashboard.tsx:248`), o `byPrinter` do hook, e as cópias inline já existentes.
+
+**Consolidação das três fontes: pendente, e por quê.** O item correspondente da ordem de implementação previa que o hook **substituísse** as cópias inline; isso **não** foi feito, por duas razões que não são de refactor:
+
+- `topPrintersData` ordena por `profit`; `byPrinter` ordena por `profitPerHour`. **São métricas diferentes** — trocar a fonte troca o critério de ordenação, não apenas a implementação.
+- `topPrintersData` alimenta o **PDF executivo** (`Dashboard.tsx:423`). Trocar a fonte **reordena o top-5 do relatório** e muda o que o PDF afirma.
+
+É decisão de produto, não de engenharia: exige escolher qual métrica o relatório executivo declara.
+
+**Fora de escopo desta entrega, com o motivo:**
+
+- [ ] **O terceiro eixo do protótipo ("jobs lucrativos")** fica de fora: introduz ordenação por 3 critérios e uma barra que se reescala ao trocar o critério, o que muda o modelo de interação do componente. Não é incremento, é redesenho.
+- [ ] **Os outros seis gráficos** continuam sob a regra da fase: `lastKnownRevenue = 14500`, `getBaselineEstimates()` e a curva de crescimento orgânico desenhada como reta são números inventados que produziriam gráficos mentirosos se portados literais. A tabela de invenções acima continua valendo, e o porquê de cada descarte está lá.
+
 ---
 
 ### 🧭 Phase 7q: Decisões de domínio pendentes do dono

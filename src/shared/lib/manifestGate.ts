@@ -40,7 +40,10 @@ function logGateEvent(message: string): void {
 }
 
 function isDev(): boolean {
-  return process.env.NODE_ENV !== "production";
+  if (typeof process !== "undefined" && process?.env?.NODE_ENV) {
+    return process.env.NODE_ENV !== "production";
+  }
+  return typeof import.meta !== "undefined" && Boolean(import.meta.env?.DEV);
 }
 
 function ensureLoaded(): ManifestIndex | null {

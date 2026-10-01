@@ -1,9 +1,12 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
-import { Pencil, Trash2, AlertTriangle } from "lucide-react";
+import { Pencil, Trash2, AlertTriangle, Play, Sparkles } from "lucide-react";
 import type { FilamentSpool, SpoolStatus } from "@/shared/stores/spoolStore";
 import { isLowStockSpool, remainingPct } from "@/shared/stores/spoolStore";
 import { SpoolRemainingBlock } from "@/shared/components/Catalog/SpoolRemainingBlock";
+import { useCalculatorStore } from "@/shared/stores/calculatorStore";
+import { useNavigationPrefsStore } from "@/shared/stores/navigationPrefsStore";
+import { useCurrency } from "@/shared/hooks/useCurrency";
 import { SpoolThumb, FALLBACK_HEX } from "./SpoolThumb";
 
 /** Limiar (g) abaixo do qual um carretel em estoque é sinalizado como baixo. */
@@ -54,14 +57,42 @@ export const SpoolCard = memo(function SpoolCard({
   onRemove,
 }: SpoolCardProps) {
   const { t } = useTranslation();
+  const { format } = useCurrency();
+  const calcStore = useCalculatorStore();
+  const setActiveTab = useNavigationPrefsStore((s) => s.setActiveTab);
   const pct = remainingPct(spool);
   const status: SpoolStatus = spool.status || "in_stock";
   const isLow = isLowStockSpool(spool, LOW_STOCK_GRAMS);
-  // O hex armazenado é a fonte da verdade; sem ele, fallback indigo
-  // (mesmo último recurso do resolveHex do FilamentInventory).
   const hex = spool.colorHex?.trim() || FALLBACK_HEX;
   const barColor = pct < 20 ? "#f97316" : hex;
   const textOnColor = readableTextColor(hex);
+
+  const handleUseInCalculation = () => {
+    calcStore.setSelectedSpoolId(spool.id);
+    if (spool.costPerKg > 0) {
+      if (spool.material.toLowerCase().includes("resina") || spool.material.toLowerCase().includes("resin")) {
+        calcStore.setField("activeTab", "resin");
+        calcStore.setResinMaterial("type", spool.material);
+        calcStore.setResinMaterial("costPerLiter", spool.costPerKg);
+      } else {
+        calcStore.setField("activeTab", "fdm");
+        const mat = spool.material.toLowerCase();
+        const matType = mat.includes("petg")
+          ? "petg"
+          : mat.includes("abs")
+            ? "abs"
+            : mat.includes("tpu")
+              ? "tpu_95a"
+              : mat.includes("silk")
+                ? "pla_silk"
+                : "pla";
+        calcStore.setFdmMaterial("type", matType);
+        calcStore.setFdmMaterial("costPerKg", spool.costPerKg);
+      }
+      calcStore.recomputeResults();
+    }
+    setActiveTab("calculator");
+  };
 
   return (
     <article
@@ -147,6 +178,22 @@ export const SpoolCard = memo(function SpoolCard({
         </div>
       </div>
 
+      {/* Price & Tare Info */}
+      <div className="flex items-center justify-between text-xs py-1 px-2.5 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)]">
+        <div>
+          <span className="text-[10px] text-[var(--color-text-muted)] block">Preço / kg</span>
+          <span className="font-bold font-mono text-[var(--color-text-primary)]">
+            {format(spool.costPerKg)}
+          </span>
+        </div>
+        <div className="text-right">
+          <span className="text-[10px] text-[var(--color-text-muted)] block">Custo por grama</span>
+          <span className="font-mono text-emerald-400 font-semibold">
+            {format(spool.costPerKg / 1000)}/g
+          </span>
+        </div>
+      </div>
+
       <SpoolRemainingBlock spool={spool} requiredGrams={requiredGrams} />
 
       {spool.notes && (
@@ -158,23 +205,28 @@ export const SpoolCard = memo(function SpoolCard({
       <div className="flex gap-2 pt-2 border-t border-[var(--color-border)]">
         <button
           type="button"
-          onClick={() => onEdit(spool)}
-          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold py-2 min-h-[36px] rounded-lg bg-[var(--color-bg-elevated)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+          onClick={handleUseInCalculation}
+          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold py-2 min-h-[36px] rounded-lg bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition-colors"
         >
-          <Pencil className="w-3 h-3" aria-hidden="true" />
-          {t("spools.editSpool")}
+          <Play className="w-3.5 h-3.5 fill-current" />
+          Usar no Cálculo
+        </button>
+        <button
+          type="button"
+          onClick={() => onEdit(spool)}
+          className="flex items-center justify-center gap-1.5 px-3 py-2 min-h-[36px] rounded-lg bg-[var(--color-bg-elevated)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-[var(--color-border)] transition-colors"
+          title={t("spools.editSpool")}
+        >
+          <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
         <button
           type="button"
           onClick={() => onRemove(spool)}
-          className="min-w-[44px] min-h-[44px] flex items-center justify-center gap-1.5 px-2.5 sm:px-3 rounded-lg bg-red-600/10 text-[var(--color-danger)] hover:bg-red-600/30 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:outline-none"
+          className="flex items-center justify-center gap-1.5 px-3 py-2 min-h-[36px] rounded-lg bg-red-600/10 text-red-400 hover:bg-red-600/30 transition-colors"
           title={t("spools.removeSpool")}
           aria-label={t("spools.removeSpool")}
         >
           <Trash2 className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          <span className="hidden sm:inline text-xs font-semibold whitespace-nowrap">
-            {t("spools.removeSpool")}
-          </span>
         </button>
       </div>
     </article>

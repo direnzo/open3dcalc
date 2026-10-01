@@ -161,7 +161,7 @@ export const guardedSyncStorage = {
     if (isPiiKey(key)) {
       const message = `refused plaintext PII write for sync key "${key}"`;
       console.warn(`[manifestStorage] ${message}`);
-      if (process.env.NODE_ENV !== "production") {
+      if (typeof process !== "undefined" && process?.env?.NODE_ENV !== "production") {
         throw new ManifestError(message);
       }
       return;

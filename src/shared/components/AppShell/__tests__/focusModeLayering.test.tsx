@@ -834,7 +834,7 @@ describe("focus mode — a passive surface never buries the exit", () => {
       "src/shared/components/Catalog/CustomerTab.tsx",
       "src/shared/components/Catalog/FilamentInventory.tsx",
       "src/shared/components/Catalog/ProductInventory.tsx",
-      "src/shared/components/Header/Header.tsx",
+      "src/shared/components/AIAssistant/AIAssistantModal.tsx",
       "src/platform/web/components/MobileSettingsSheet.tsx",
       "src/shared/components/SpoolShelf/SpoolForm.tsx",
     ].sort();

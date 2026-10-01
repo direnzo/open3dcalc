@@ -1,0 +1,8 @@
+{
+  "name": "Open3DCalc",
+  "description": "Calculadora de custos de impressão 3D gratuita e open-source para modelagem FDM e Resina.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

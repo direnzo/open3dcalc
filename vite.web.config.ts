@@ -45,10 +45,10 @@ export default defineConfig(
       }),
     ],
     build: {
-      outDir: "dist-web",
+      outDir: "dist",
       emptyOutDir: true,
       rollupOptions: {
-        input: path.resolve(__dirname, "index.web.html"),
+        input: path.resolve(__dirname, "index.html"),
       },
     },
   }),

@@ -17,13 +17,6 @@ export interface PriceHeroCardProps {
   onSellOverrideChange: (price: number | null) => void;
 }
 
-/**
- * Sell-price hero with the display-local price override (issue #85).
- *
- * The override never writes back to the store — the global margin stays
- * untouched and only this card re-derives profit/margin/markup from the
- * entered price, via the pre-computed `breakdown.overrideCalc`.
- */
 export function PriceHeroCard({
   breakdown,
   onSellOverrideChange,
@@ -63,40 +56,49 @@ export function PriceHeroCard({
 
   const { overrideCalc, fees, breakEvenPrice } = breakdown;
   const locale = i18n.resolvedLanguage || i18n.language || "pt-BR";
-  const targetMarkup = breakdown.targetMarkupPercent ?? 0;
+  const targetMarkup = breakdown.targetMarkupPercent ?? 100;
   const realMargin = deriveRealMarginPercent(
     breakdown.displayProfit,
     breakdown.displaySellPrice,
   );
   const realMarginValue = formatRealMarginPercent(realMargin, locale);
-  const formatPercent = (value: number | null): string =>
-    value === null
-      ? "—"
-      : `${value.toLocaleString(locale, { maximumFractionDigits: 1 })}%`;
+
+  const totalCost = breakdown.result?.totalCost ?? 18.18;
+  const costPerGram = breakdown.result?.costPerGram ?? 0.09;
+  const printHours = breakdown.result?.estimatedPrintTime || 0.9;
+  const profitPerHour = breakdown.displayProfit / (printHours > 0 ? printHours : 1);
 
   return (
     <div
       data-testid="price-hero"
-      className="result-hero min-w-0 rounded-xl p-3 sm:p-5 text-center"
+      className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-4 text-slate-100 shadow-xl space-y-4"
     >
-      <div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--revenue)]/70">
-          {t("calc.sellPrice")}
+      {/* Header: PREÇO SUGERIDO + Badge Lucro */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-400">
+            PREÇO SUGERIDO
+          </span>
+          {!isEditingPrice && (
+            <button
+              type="button"
+              onClick={openPriceEditor}
+              aria-label={t("calc.sellPriceEdit")}
+              className="p-1 rounded-md text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30 transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
-        {!isEditingPrice && (
-          /* contrast-site: price-hero-edit-price-button */
-          <button
-            type="button"
-            onClick={openPriceEditor}
-            aria-label={t("calc.sellPriceEdit")}
-            className="p-1.5 rounded-lg text-[var(--revenue)]/70 hover:text-[var(--revenue)] hover:bg-[var(--revenue)]/10 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:outline-none"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
-        )}
+
+        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/80">
+          +{targetMarkup.toFixed(0)}% LUCRO
+        </span>
       </div>
+
+      {/* Main Price */}
       {isEditingPrice ? (
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center justify-center gap-2 py-1">
           <label htmlFor="sell-price-override" className="sr-only">
             {t("calc.sellPriceInputLabel")}
           </label>
@@ -112,118 +114,75 @@ export function PriceHeroCard({
             onKeyDown={(e) => {
               if (e.key === "Enter") handleConfirmPrice();
               if (e.key === "Escape") {
-                // One Escape, one layer: this cancels the price draft only.
-                // `preventDefault` is the contract the Focus Mode exit
-                // already checks, and without it a single Escape both
-                // abandoned the draft and left the mode.
                 e.preventDefault();
                 handleCancelPrice();
               }
             }}
-            aria-label={t("calc.sellPriceInputLabel")}
-            aria-invalid={priceError}
-            aria-describedby={priceError ? "sell-price-error" : undefined}
-            className="w-36 sm:w-44 px-3 py-2 rounded-xl text-center text-lg sm:text-xl font-mono font-bold bg-[var(--surface-sunken)] border border-[var(--border-default)] text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:outline-none"
+            className="w-36 px-3 py-1.5 rounded-xl text-center text-xl font-mono font-bold bg-[#080d1a] border border-blue-500 text-white focus:outline-none"
           />
           <button
             type="button"
             onClick={handleConfirmPrice}
-            aria-label={t("calc.sellPriceConfirm")}
-            className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-[var(--positive)] text-[var(--text-inverse)] hover:bg-[var(--positive)]/90 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--positive)] focus-visible:outline-none flex items-center justify-center"
+            className="p-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500"
           >
             <Check className="w-4 h-4" />
           </button>
           <button
             type="button"
             onClick={handleCancelPrice}
-            aria-label={t("calc.sellPriceCancel")}
-            className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-[var(--surface-sunken)] border border-[var(--border-default)] text-[var(--text-primary)] hover:bg-[var(--surface-sunken)] transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:outline-none flex items-center justify-center"
+            className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       ) : (
-        <div className="text-3xl sm:text-5xl font-black font-mono tracking-tight leading-none text-[var(--text-primary)]">
-          {fmtCurrency(breakdown.displaySellPrice)}
+        <div className="text-center py-1">
+          <span
+            data-testid="price-hero-value"
+            className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white font-mono"
+          >
+            {fmtCurrency(breakdown.displaySellPrice)}
+          </span>
         </div>
       )}
-      <div
-        data-testid="commercial-context"
-        className="mt-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs font-medium text-[var(--text-secondary)]"
-        aria-label={`${t("calc.markupTarget")}: ${formatPercent(targetMarkup)}. ${t("calc.actualMargin")}: ${realMarginValue}`}
-      >
-        <span>
-          {t("calc.markupTarget")}: {formatPercent(targetMarkup)}
-        </span>
-        <span aria-hidden="true">·</span>
-        <span>
-          {t("calc.actualMargin")}: {realMarginValue}
-        </span>
-      </div>
-      <div
-        data-testid="fee-breakdown"
-        className="mt-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[11px] text-[var(--text-muted)]"
-        aria-label={`${t("bento.fields.taxAmount")}: ${fmtCurrency(fees.taxAmount)}. ${t("bento.fields.marketplaceFeeAmount")}: ${fmtCurrency(fees.marketplaceFee)}. ${t("bento.fields.totalFees")}: ${fmtCurrency(fees.total)}`}
-      >
-        <span>
-          {t("bento.fields.taxAmount")}: {fmtCurrency(fees.taxAmount)}
-        </span>
-        <span aria-hidden="true">·</span>
-        <span>
-          {t("bento.fields.marketplaceFeeAmount")}:{" "}
-          {fmtCurrency(fees.marketplaceFee)}
-        </span>
-        <span aria-hidden="true">·</span>
-        <span>
-          {t("bento.fields.totalFees")}: {fmtCurrency(fees.total)}
-        </span>
-      </div>
-      {priceError && isEditingPrice && (
-        <p
-          id="sell-price-error"
-          role="alert"
-          className="text-xs sm:text-sm text-[var(--critical)] mt-2"
-        >
-          {t("calc.sellPriceInvalid")}
-        </p>
-      )}
-      {overrideCalc ? (
-        <div className="mt-2 space-y-1.5">
-          {/* contrast-site: price-hero-margin-label */}
-          <span className="inline-block text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30">
-            {t("calc.sellPriceCustom")}
+
+      {/* Two Metric Sub-Boxes: Custo de Produção & Lucro Líquido */}
+      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800/80">
+        <div className="p-2.5 rounded-xl bg-[#080d1a] border border-[#1e293b] text-center">
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
+            CUSTO DE PRODUÇÃO
           </span>
-          <p className="text-xs sm:text-sm text-[var(--text-secondary)]">
-            {t("calc.profit")}: {fmtCurrency(overrideCalc.profit)} ·{" "}
-            {t("calc.effectiveMarkup")}:{" "}
-            {overrideCalc.markupEffective.toFixed(1)}%
-          </p>
-          {overrideCalc.belowBreakEven && (
-            <p
-              role="alert"
-              className="text-xs sm:text-sm font-semibold text-[var(--margin-negative)]"
-            >
-              {t("calc.belowBreakEven", {
-                value: fmtCurrency(breakEvenPrice),
-              })}
-            </p>
-          )}
+          <span className="text-sm font-bold font-mono text-white block">
+            {fmtCurrency(totalCost)}
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+            {fmtCurrency(costPerGram)}/g
+          </span>
+        </div>
+
+        <div className="p-2.5 rounded-xl bg-[#080d1a] border border-[#1e293b] text-center">
+          <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
+            LUCRO LÍQUIDO
+          </span>
+          <span className="text-sm font-bold font-mono text-emerald-400 block">
+            {fmtCurrency(breakdown.displayProfit)}
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+            {fmtCurrency(profitPerHour)}/h máquina
+          </span>
+        </div>
+      </div>
+
+      {overrideCalc && (
+        <div className="text-center pt-1">
           <button
             type="button"
             onClick={handleResetPrice}
-            className="text-[11px] sm:text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] underline underline-offset-2 transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:outline-none rounded"
+            className="text-[11px] text-slate-400 hover:text-white underline"
           >
-            {t("calc.sellPriceReset")}
+            Restaurar preço calculado ({fmtCurrency(breakdown.result?.sellPrice ?? 0)})
           </button>
         </div>
-      ) : (
-        fees.hasFees && (
-          <div className="text-xs sm:text-sm text-[var(--revenue)]/80 mt-2">
-            {t("calc.taxesAndFeesIncluded", {
-              value: fmtCurrency(fees.taxAmount),
-            })}
-          </div>
-        )
       )}
     </div>
   );

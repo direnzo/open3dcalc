@@ -106,7 +106,7 @@ export function Calculator() {
         <div
           data-tutorial="results-sidebar"
           data-testid="results-sidebar"
-          className="col-start-2 row-start-1 hidden 2xl:flex 2xl:col-start-3 flex-col gap-5 w-[336px] shrink-0 sticky top-[92px] self-start h-[calc(100vh-120px)] max-h-[calc(100vh-120px)] overflow-hidden"
+          className="col-start-2 row-start-1 hidden 2xl:flex 2xl:col-start-3 flex-col gap-5 w-[336px] shrink-0 sticky top-[76px] self-start h-[calc(100vh-96px)] max-h-[calc(100vh-96px)] overflow-hidden"
         >
           <ResultsSidebar onExportBlocked={notifyBlockedExport} />
         </div>

@@ -22,6 +22,9 @@ export default defineConfig({
     // Single source of truth for the app version: package.json. Consumed via
     // src/shared/version.ts — never hardcode a version literal in the UI.
     __APP_VERSION__: JSON.stringify(pkg.version),
+    "process.env.NODE_ENV": JSON.stringify(
+      process.env.NODE_ENV || "development",
+    ),
   },
   plugins: [react(), tailwindcss(), markdownWikiPlugin()],
   resolve: {
@@ -31,6 +34,8 @@ export default defineConfig({
     },
   },
   server: {
+    host: "0.0.0.0",
+    port: 3000,
     allowedHosts: true,
   },
   optimizeDeps: {

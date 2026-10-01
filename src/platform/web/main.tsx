@@ -4,12 +4,23 @@ import App from '@/platform/web/App'
 import '@/shared/i18n/i18n'
 import './index.css'
 import { initTheme } from '@/shared/hooks/useTheme'
+import { ErrorBoundary } from '@/shared/components/ErrorBoundary'
 
 // Initialize theme BEFORE React renders to prevent flash of wrong theme.
-initTheme()
+try {
+  initTheme()
+} catch (e) {
+  console.warn('[main.tsx] Failed to initialize theme:', e)
+}
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
+const rootEl = document.getElementById('root')
+if (rootEl) {
+  ReactDOM.createRoot(rootEl).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </React.StrictMode>,
+  )
+}
+

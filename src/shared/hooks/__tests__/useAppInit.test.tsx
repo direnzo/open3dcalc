@@ -53,7 +53,18 @@ vi.mock("@/shared/lib/calculationLink", () => ({
   getSharedCalculation: vi.fn(() => sharedCalculation.current),
 }));
 
-vi.mock("@/shared/lib/printers", () => ({ printers: [] }));
+vi.mock("@/shared/lib/printers", () => ({
+  printers: [],
+  getPrinter: vi.fn((id: string) => ({
+    id: id || "generic-fdm",
+    name: "Mock Printer",
+    power: 200,
+    investment: 2500,
+    usefulLife: 3000,
+    maintenanceRate: 0.05,
+    technology: "fdm",
+  })),
+}));
 vi.mock("@/shared/lib/marketplace", () => ({ marketplaces: [] }));
 vi.mock("@/shared/hooks/useTutorialTabNavigation", () => ({
   useTutorialTabNavigation: vi.fn(),

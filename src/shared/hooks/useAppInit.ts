@@ -29,6 +29,7 @@ import { marketplaces } from "@/shared/lib/marketplace";
 import { useTutorialStore } from "@/shared/stores/tutorialStore";
 import { useLayoutStore } from "@/shared/stores/layoutStore";
 import { useTutorialTabNavigation } from "@/shared/hooks/useTutorialTabNavigation";
+import { seedDefaultStudioDataIfEmpty } from "@/shared/lib/initialWorkshopSeed";
 import type { Tab } from "@/shared/components/AppShell/tabs";
 import type {
   CalculationResult,
@@ -744,6 +745,7 @@ export function useAppInit(onTabChange: (tab: Tab) => void): void {
   useEffect(() => {
     restoreAutoSnapshot();
     migrateLegacyData();
+    seedDefaultStudioDataIfEmpty();
 
     const handleBeforeUnload = saveSettingsBeforeUnload;
     window.addEventListener("beforeunload", handleBeforeUnload);

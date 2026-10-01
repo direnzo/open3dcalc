@@ -362,6 +362,10 @@
       "ops": "PPE, slicer and model license",
       "sales": "Packaging, shipping, marketplace and margin"
     },
+    "sectionMetric": {
+      "totalTime": "Total Time",
+      "totalExtras": "Total Extras"
+    },
     "printVsBuy": "Print vs Buy",
     "buyPrice": "Buy Price",
     "savings": "Savings",
@@ -1452,6 +1456,23 @@
     "exit": "Exit focus mode",
     "active": "Focus Mode is on",
     "hint": "Only the calculator is shown. Press Esc to leave."
+  },
+  "quickActions": {
+    "open": "Quick Actions",
+    "close": "Close",
+    "menu": "Quick actions",
+    "newProject": "New Project",
+    "quote": "Quick Quote",
+    "inventory": "View Stock",
+    "shortcuts": "Keyboard Shortcuts",
+    "shortcutsTitle": "Keyboard shortcuts",
+    "closeShortcuts": "Close keyboard shortcuts",
+    "shortcutUndo": "Undo",
+    "shortcutExport": "Export",
+    "shortcutPrint": "Print",
+    "pillLabel": "Workshop summary",
+    "pillFocus": "Enter Focus Mode",
+    "pillFocusShort": "Focus"
   },
   "update": {
     "checkForUpdates": "Check for Updates",

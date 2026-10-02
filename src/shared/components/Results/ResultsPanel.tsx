@@ -1,10 +1,8 @@
 import { useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { FileText, Share2, Sparkles, Check, Bookmark } from "lucide-react";
 
 import { useCalculatorStore } from "@/shared/stores/calculatorStore";
 import { useFinancialBreakdown } from "@/shared/hooks/useFinancialBreakdown";
-import { BREAKPOINT_2XL, useMediaQuery } from "@/shared/hooks/useMediaQuery";
 import type { SidebarMode } from "@/shared/stores/layoutStore";
 import type { PrintParameters } from "@/shared/types";
 
@@ -79,16 +77,6 @@ export function ResultsPanel({
   // Display-local sell-price override (issue #85): never writes back to the
   // store, so the global margin stays untouched.
   const [sellOverride, setSellOverride] = useState<number | null>(null);
-  const [copiedLink, setCopiedLink] = useState(false);
-
-  const handleCopyLink = () => {
-    if (typeof window !== "undefined") {
-      navigator.clipboard?.writeText(window.location.href);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
-    }
-  };
-
   const breakdown = useFinancialBreakdown({
     result: results,
     activeTab,
@@ -96,12 +84,6 @@ export function ResultsPanel({
     fdmSales,
     resinSales,
   });
-
-  const machineValue = 2000;
-  const breakEvenUnits =
-    breakdown.displayProfit > 0
-      ? Math.ceil(machineValue / breakdown.displayProfit)
-      : 42;
 
   const calculationNotice = suppressCalculationError ? null : (
     <CalculationErrorState
@@ -111,12 +93,6 @@ export function ResultsPanel({
     />
   );
 
-  // Mirrors the `hidden 2xl:flex` / `2xl:hidden` wrappers in CSS so the donut
-  // is never mounted into a surface that is currently display:none (Recharts
-  // only warns about a 0×0 container after the fact; not mounting is the fix).
-  // Must run before the early return below — hooks are unconditional.
-  const at2xl = useMediaQuery(BREAKPOINT_2XL);
-
   if (!results) {
     const emptyContent = (
       <div data-testid="results-hierarchy" className="min-w-0 space-y-4">
@@ -124,7 +100,7 @@ export function ResultsPanel({
       </div>
     );
     return variant === "mobile" ? (
-      <div className="space-y-4 2xl:hidden">{emptyContent}</div>
+      <div className="space-y-4">{emptyContent}</div>
     ) : (
       emptyContent
     );
@@ -139,11 +115,6 @@ export function ResultsPanel({
     isSidebar &&
     ((sidebarMode === "compact" && compactView === "chart") ||
       (sidebarMode === "tabs" && activeTabView === "chart"));
-  // Which panel the CSS is actually showing: the sidebar exists only at ≥2xl
-  // (`hidden 2xl:flex`), the inline results only below it (`2xl:hidden`), and
-  // the bento surface has no breakpoint at all.
-  const panelVisible =
-    variant === "sidebar" ? at2xl : variant === "mobile" ? !at2xl : true;
   // When the sidebar is not presenting the donut, the bars carry the
   // composition alone. CostBreakdownCard already renders CostDistributionBars
   // itself when `isSidebar` is set, so this component must not add a second
@@ -155,7 +126,6 @@ export function ResultsPanel({
       chartData={breakdown.chartData}
       totalCost={results.totalCost}
       isSidebar={isSidebar && !showChart}
-      panelVisible={panelVisible}
     />
   );
   const actions = (
@@ -176,11 +146,13 @@ export function ResultsPanel({
     );
 
   const spacingClass =
-    sidebarMode === "compact"
-      ? "space-y-3"
-      : sidebarMode === "expanded"
-        ? "space-y-6"
-        : "space-y-4";
+    variant === "mobile"
+      ? "space-y-4"
+      : sidebarMode === "compact"
+        ? "space-y-3"
+        : sidebarMode === "expanded"
+          ? "space-y-6"
+          : "space-y-4";
   const content = (
     <div
       data-testid="results-hierarchy"
@@ -201,55 +173,6 @@ export function ResultsPanel({
       />
       {compactDistribution}
 
-      {/* Break-Even da Máquina (Screenshot 1) */}
-      <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3 space-y-1.5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-400">
-            BREAK-EVEN DA MÁQUINA
-          </span>
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-            {breakEvenUnits} peças
-          </span>
-        </div>
-        <p className="text-xs text-slate-300 font-medium leading-relaxed">
-          Faltam <span className="font-bold text-white">{breakEvenUnits} peças</span> como esta para pagar a impressora.
-        </p>
-      </div>
-
-      {/* Primary Proposta / Orçamento Actions (Screenshot 1) */}
-      <div className="space-y-2 pt-1">
-        <button
-          type="button"
-          onClick={() => window.print()}
-          className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-900/30 transition-all active:scale-[0.99]"
-        >
-          <FileText className="w-4 h-4" />
-          Gerar Proposta Comercial (PDF)
-        </button>
-
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={handleCopyLink}
-            className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-[#1e293b] bg-[#090e1a] hover:bg-slate-800 text-slate-200 text-xs font-semibold transition-colors"
-          >
-            {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5 text-slate-400" />}
-            {copiedLink ? "Copiado!" : "Copiar Link"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent("open-copilot-modal"));
-            }}
-            className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border border-purple-500/40 bg-purple-950/20 hover:bg-purple-900/30 text-purple-300 text-xs font-semibold transition-colors"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            ✨ Análise IA
-          </button>
-        </div>
-      </div>
-
       {showDiagnostics && (
         <DiagnosticDetailsCard
           costPerGram={results.costPerGram}
@@ -264,8 +187,5 @@ export function ResultsPanel({
     </div>
   );
 
-  if (variant === "mobile") {
-    return <div className="space-y-4 2xl:hidden">{content}</div>;
-  }
   return content;
 }

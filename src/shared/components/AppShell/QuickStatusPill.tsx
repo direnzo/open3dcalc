@@ -1,16 +1,5 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  AlertTriangle,
-  Focus,
-  Activity,
-  Plus,
-  HelpCircle,
-  X,
-  XCircle,
-  AlertCircle,
-  ChevronUp,
-} from "lucide-react";
+import { AlertTriangle, Focus, HelpCircle } from "lucide-react";
 
 import { useCurrency } from "@/shared/hooks/useCurrency";
 import { useHistoryStore } from "@/shared/stores/historyStore";
@@ -37,7 +26,7 @@ export function QuickStatusPill(): React.ReactElement | null {
         role="group"
         data-testid="quick-status-pill"
         aria-label={t("quickActions.pillLabel")}
-        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 px-3 py-1.5 rounded-full border border-[#1e293b] bg-[#0b1120]/95 backdrop-blur-md shadow-2xl select-none text-xs text-slate-200"
+        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 sm:gap-2.5 px-3 py-1.5 rounded-full border border-[#1e293b] bg-[#0b1120]/95 backdrop-blur-md shadow-2xl select-none whitespace-nowrap text-xs text-slate-200"
       >
         {/* Pulse Dot + Mini-Dash */}
         <div className="flex items-center gap-1.5 font-bold text-emerald-400">
@@ -55,18 +44,17 @@ export function QuickStatusPill(): React.ReactElement | null {
           </span>
         )}
 
-        {/* Fleet Machines status */}
-        <span className="text-emerald-400 font-medium text-[11px]">
-          • 2/6 máq.
-        </span>
-
         {/* Low Stock Warning */}
         <span
           data-testid="pill-segment-lowstock"
           className="flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-400 border border-amber-800/60"
         >
-          <AlertTriangle className="w-3 h-3 text-amber-400" aria-hidden="true" />
-          {lowStockCount} {t("quickActions.lowStock", { defaultValue: "baixos" })}
+          <AlertTriangle
+            className="w-3 h-3 text-amber-400"
+            aria-hidden="true"
+          />
+          {lowStockCount}{" "}
+          {t("quickActions.lowStock", { defaultValue: "baixos" })}
         </span>
 
         {/* Focus Mode */}
@@ -86,22 +74,14 @@ export function QuickStatusPill(): React.ReactElement | null {
         <button
           type="button"
           onClick={() => useTutorialStore.getState().startTutorial()}
+          aria-label={t("quickActions.pillHelp", {
+            defaultValue: "Ajuda / Tutorial",
+          })}
           className="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-white rounded-full transition-colors"
           title="Ajuda / Tutorial"
         >
           <HelpCircle className="w-3.5 h-3.5" />
         </button>
-      </div>
-
-      {/* ── BOTTOM RIGHT DIAGNOSTIC COUNTERS ── */}
-      <div className="fixed bottom-2 right-3 z-20 hidden md:flex items-center gap-2 text-[11px] font-mono text-slate-400 select-none">
-        <span className="flex items-center gap-1 text-red-400 font-semibold">
-          <XCircle className="w-3 h-3" /> 2
-        </span>
-        <span className="flex items-center gap-1 text-amber-400 font-semibold">
-          <AlertCircle className="w-3 h-3" /> 5
-        </span>
-        <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
       </div>
     </>
   );

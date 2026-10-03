@@ -6,9 +6,9 @@ import { WikiPage } from "@/shared/components/Wiki/WikiPage";
 import { InfillCalculator } from "@/shared/components/Calculator/InfillCalculator";
 import { SpoolShelf } from "@/shared/components/SpoolShelf/SpoolShelf";
 import { CustomerTab } from "@/shared/components/Catalog/CustomerTab";
-import { ProductInventory } from "@/shared/components/Catalog/ProductInventory";
+import { StudioQuotesView } from "@/platform/web/components/studio/StudioQuotesView";
+import { StudioProductsView } from "@/platform/web/components/studio/StudioProductsView";
 import { PrivacyScreen } from "@/shared/components/Privacy/PrivacyScreen";
-import { QuoteSection } from "@/shared/components/Calculator/QuoteSection";
 import { CalculatorSurface } from "@/shared/components/Calculator/surfaces/CalculatorSurface";
 import type { Tab } from "./tabs";
 
@@ -41,9 +41,9 @@ export function MainContent({
       )}
       {activeTab === "changelog" && <ChangelogPage />}
       {activeTab === "wiki" && <WikiPage />}
-      {activeTab === "quotes" && <QuoteSection />}
+      {activeTab === "quotes" && <StudioQuotesView />}
       {activeTab === "customers" && <CustomerTab />}
-      {activeTab === "products" && <ProductInventory />}
+      {activeTab === "products" && <StudioProductsView />}
       {activeTab === "privacy" && <PrivacyScreen />}
     </>
   );

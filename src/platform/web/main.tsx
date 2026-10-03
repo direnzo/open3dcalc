@@ -5,6 +5,14 @@ import '@/shared/i18n/i18n'
 import './index.css'
 import { initTheme } from '@/shared/hooks/useTheme'
 import { ErrorBoundary } from '@/shared/components/ErrorBoundary'
+import { installPiiStoreRuntimeEnvironment } from '@/shared/lib/crypto/piiStoreHydration'
+
+// Initialize PII crypto capabilities immediately so capability_unknown never occurs
+try {
+  installPiiStoreRuntimeEnvironment()
+} catch (e) {
+  console.warn('[main.tsx] Failed to install pii runtime environment:', e)
+}
 
 // Initialize theme BEFORE React renders to prevent flash of wrong theme.
 try {

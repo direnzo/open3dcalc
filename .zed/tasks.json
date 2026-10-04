@@ -1,0 +1,38 @@
+[
+  {
+    "label": "Web: Dev Server (Vite :3000)",
+    "command": "npm",
+    "args": ["run", "dev:web"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "Web: Preview (build :4173)",
+    "command": "npm",
+    "args": ["run", "preview:web"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "Test: Vitest",
+    "command": "npm",
+    "args": ["run", "test:run"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": true,
+    "reveal": "always"
+  },
+  {
+    "label": "Lint: ESLint",
+    "command": "npm",
+    "args": ["run", "lint"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": true,
+    "reveal": "always"
+  }
+]

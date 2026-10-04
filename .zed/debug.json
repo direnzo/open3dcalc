@@ -1,0 +1,12 @@
+[
+  {
+    "adapter": "JavaScript",
+    "label": "Web: Chrome localhost:3000",
+    "type": "chrome",
+    "request": "launch",
+    "url": "http://localhost:3000",
+    "webRoot": "$ZED_WORKTREE_ROOT",
+    "console": "integratedTerminal",
+    "skipFiles": ["<node_internals>/**"]
+  }
+]

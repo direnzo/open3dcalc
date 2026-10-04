@@ -83,6 +83,17 @@ describe("dataManifest loader (SPEC-01)", () => {
     expect(entry?.platforms).toEqual(["electron", "web", "pwa"]);
   });
 
+  it("SPEC-01: classifies ordinary product inventory as non-PII", () => {
+    const manifest = loadManifest(manifestFixture as ManifestDocument);
+    expect(getEntry(manifest, "open3dcalc_products")).toMatchObject({
+      key: "open3dcalc_products",
+      class: "user_content",
+      pii: false,
+      persistence: "plaintext_allowed",
+      legal_basis: "not_personal_data",
+    });
+  });
+
   it("SPEC-01: loader enum sets match the normative schema $defs (no drift)", () => {
     const defs = (
       manifestSchema as unknown as { $defs: Record<string, { enum: string[] }> }

@@ -1,5 +1,5 @@
 import { render, renderHook, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CostSummaryCard } from "@/shared/components/Results/CostSummaryCard";
 import { useFinancialBreakdown } from "@/shared/hooks/useFinancialBreakdown";
@@ -9,12 +9,32 @@ import { buildSnapshot } from "@/shared/stores/__tests__/calculatorStore.test-ut
 import { useCalculatorStore } from "@/shared/stores/calculatorStore";
 import { useCatalogStore } from "@/shared/stores/catalogStore";
 import { restoreAutoSnapshot } from "@/shared/stores/storeBridge";
+import { useHistoryStore } from "@/shared/stores/historyStore";
+import {
+  configurePiiStoreRuntime,
+  resetPiiStoreHydrationForTests,
+  unlockPiiStoresAndRehydrate,
+  whenPiiWritesSettled,
+} from "@/shared/lib/crypto/piiStoreHydration";
+import {
+  lockAllPiiStores,
+  PII_VAULT_STORE,
+  resetPiiStoreRuntimeForTests,
+} from "@/shared/lib/crypto/piiStore";
+import { resetPiiStoreGateForTests } from "@/shared/lib/crypto/piiStoreCapability";
+import { zeroizeSessionPassphrase } from "@/shared/lib/crypto/passphraseSession";
+import { PII_STORE_ENVIRONMENT } from "@/shared/lib/crypto/__tests__/piiStoreFixtures";
+import { createFakeIndexedDb } from "@/shared/test/fakeIndexedDb";
 import type {
   AMSSlot,
   CalculationSnapshot,
   LaborCosts,
   PrintParameters,
 } from "@/shared/types";
+
+const PASS = "legacy-history-fixture-passphrase";
+const SETTINGS_STORAGE_KEY = "open3dcalc_settings_v2";
+const HISTORY_STORAGE_KEY = "open3dcalc_history_v2";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -44,7 +64,11 @@ const LABOR: LaborCosts = {
   hourlyRate: 25,
 };
 
-const RESTORE_SCENARIOS = ["fdm-default", "resin-default", "partial-legacy"] as const;
+const RESTORE_SCENARIOS = [
+  "fdm-default",
+  "resin-default",
+  "partial-legacy",
+] as const;
 type RestoreScenario = (typeof RESTORE_SCENARIOS)[number];
 
 const resetAll = (): void => {
@@ -79,7 +103,9 @@ const partialFdmLabor = (): LaborCosts =>
     setupTimeMinutes: 30,
   }) as LaborCosts;
 
-const buildRestoreSnapshot = (scenario: RestoreScenario): CalculationSnapshot => {
+const buildRestoreSnapshot = (
+  scenario: RestoreScenario,
+): CalculationSnapshot => {
   const snapshot = buildSnapshot();
 
   if (scenario === "partial-legacy") {
@@ -111,9 +137,7 @@ const buildRestoreSnapshot = (scenario: RestoreScenario): CalculationSnapshot =>
 };
 
 const restoreSnapshot = (scenario: RestoreScenario): void => {
-  useCalculatorStore
-    .getState()
-    .loadHistoryItem(buildRestoreSnapshot(scenario));
+  useCalculatorStore.getState().loadHistoryItem(buildRestoreSnapshot(scenario));
 };
 
 beforeEach(() => {
@@ -172,6 +196,51 @@ describe("snapshot restore result regression", () => {
     expect(state.fdmAmsSlots).toEqual(savedAmsSlots);
   });
 
+  it("restores saved material cost and density without catalog auto-population", () => {
+    const savedMaterial = {
+      ...useCalculatorStore.getState().fdmMaterial,
+      type: "PLA",
+      costPerKg: 317,
+      density: 1.43,
+    };
+    localStorage.setItem(
+      "open3dcalc_settings_v2",
+      JSON.stringify({ activeTab: "fdm", fdmMaterial: savedMaterial }),
+    );
+
+    expect(restoreAutoSnapshot()).toBe(true);
+
+    const restored = useCalculatorStore.getState().fdmMaterial;
+    // The name matches a catalog seed, but the financial inputs remain the
+    // independently saved calculator values.
+    expect(restored.type).toBe("PLA");
+    expect(restored.costPerKg).toBe(317);
+    expect(restored.density).toBe(1.43);
+    expect(restored).toEqual(savedMaterial);
+  });
+
+  it("does not replace an unknown legacy material name with the PLA default", () => {
+    const savedMaterial = {
+      ...useCalculatorStore.getState().fdmMaterial,
+      type: "Legacy PETG Blend",
+      costPerKg: 317,
+      density: 1.39,
+    };
+    localStorage.setItem(
+      "open3dcalc_settings_v2",
+      JSON.stringify({ activeTab: "fdm", fdmMaterial: savedMaterial }),
+    );
+
+    expect(restoreAutoSnapshot()).toBe(true);
+
+    const restored = useCalculatorStore.getState().fdmMaterial;
+    expect(restored.type).toBe("Legacy PETG Blend");
+    expect(restored.type).not.toBe("PLA");
+    expect(restored.costPerKg).toBe(317);
+    expect(restored.density).toBe(1.39);
+    expect(restored).toEqual(savedMaterial);
+  });
+
   it("restores a partial legacy slice without losing energy or failure cost", () => {
     localStorage.setItem(
       "open3dcalc_settings_v2",
@@ -222,8 +291,12 @@ describe("snapshot restore result regression", () => {
       }),
     );
     const breakdown = hook.current;
-    expect(breakdown.chartData.some((entry) => entry.category === "energy")).toBe(true);
-    expect(breakdown.chartData.some((entry) => entry.category === "failure")).toBe(true);
+    expect(
+      breakdown.chartData.some((entry) => entry.category === "energy"),
+    ).toBe(true);
+    expect(
+      breakdown.chartData.some((entry) => entry.category === "failure"),
+    ).toBe(true);
 
     render(
       <CostSummaryCard
@@ -243,7 +316,10 @@ describe("snapshot restore result regression", () => {
   ] as const)("keeps results finite for %s", (scenario) => {
     const snapshot = buildRestoreSnapshot("partial-legacy");
     useCalculatorStore.setState({ fdmPrintParams: partialFdmPrintParams() });
-    if (scenario === "labor-before-snapshot" || scenario === "labor-before-level") {
+    if (
+      scenario === "labor-before-snapshot" ||
+      scenario === "labor-before-level"
+    ) {
       useCalculatorStore.getState().setFdmLabor(LABOR);
     }
     if (scenario === "snapshot-hidden-field") {
@@ -326,5 +402,115 @@ describe("snapshot restore result regression", () => {
     const restored = useCalculatorStore.getState();
     expect(restored.fdmMachine.hoursPerMonth).toBe(123);
     expect(restored.fdmSales.taxPercent).toBe(7);
+  });
+});
+
+describe("persisted legacy calculator and history restore", () => {
+  let idb: ReturnType<typeof createFakeIndexedDb>;
+  const options = () => ({
+    indexedDb: idb.factory,
+    environment: PII_STORE_ENVIRONMENT,
+  });
+
+  beforeEach(() => {
+    idb = createFakeIndexedDb();
+    resetPiiStoreGateForTests();
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    zeroizeSessionPassphrase();
+  });
+
+  afterEach(() => {
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    resetPiiStoreGateForTests();
+    zeroizeSessionPassphrase();
+  });
+
+  it("rehydrates persisted history and restores legacy material data without rewriting storage", async () => {
+    const legacyMaterial = {
+      ...useCalculatorStore.getState().fdmMaterial,
+      type: "Legacy PETG Blend",
+      costPerKg: 317,
+      density: 1.39,
+    };
+    const serializedSettings = JSON.stringify({
+      activeTab: "fdm",
+      fdmMaterial: legacyMaterial,
+    });
+    localStorage.setItem(SETTINGS_STORAGE_KEY, serializedSettings);
+
+    configurePiiStoreRuntime(options());
+    await unlockPiiStoresAndRehydrate(PASS, options());
+
+    const snapshot = buildSnapshot({ fdmMaterial: legacyMaterial });
+    const result = useCalculatorStore.getState().results;
+    expect(result).not.toBeNull();
+    useHistoryStore.getState().addEntry({
+      id: "history-legacy-material",
+      timestamp: 1_728_000_000_000,
+      type: "fdm",
+      name: legacyMaterial.type,
+      summary: "Legacy material history snapshot",
+      totalCost: 50,
+      sellPrice: 80,
+      profit: 30,
+      result: result!,
+      snapshot,
+    });
+    await whenPiiWritesSettled();
+
+    const sealedHistoryBeforeReload = idb.raw(
+      PII_VAULT_STORE,
+      HISTORY_STORAGE_KEY,
+    );
+    expect(sealedHistoryBeforeReload).toBeTypeOf("string");
+
+    // Simulate a fresh calculator/history store: discard in-memory state while
+    // locked, then restore settings and hydrate history from serialized IDB.
+    lockAllPiiStores();
+    resetPiiStoreRuntimeForTests();
+    resetPiiStoreHydrationForTests();
+    useHistoryStore.setState({ entries: [] });
+    await whenPiiWritesSettled();
+    useCalculatorStore.setState({
+      fdmMaterial: {
+        ...legacyMaterial,
+        type: "PLA",
+        costPerKg: 1,
+        density: 1.24,
+      },
+    });
+
+    expect(restoreAutoSnapshot()).toBe(true);
+    const restoredSettingsMaterial = useCalculatorStore.getState().fdmMaterial;
+    expect(restoredSettingsMaterial).toEqual(legacyMaterial);
+    expect(restoredSettingsMaterial.type).toBe("Legacy PETG Blend");
+    expect(restoredSettingsMaterial.type).not.toBe("PLA");
+    expect(restoredSettingsMaterial.costPerKg).toBe(317);
+    expect(restoredSettingsMaterial.density).toBe(1.39);
+    expect("id" in restoredSettingsMaterial).toBe(false);
+    expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).toBe(serializedSettings);
+
+    await unlockPiiStoresAndRehydrate(PASS, options());
+    const restoredHistory = useHistoryStore.getState().entries;
+    expect(restoredHistory).toHaveLength(1);
+    expect(restoredHistory[0].snapshot?.fdmMaterial).toEqual(legacyMaterial);
+    expect(restoredHistory[0].snapshot?.fdmMaterial.type).toBe(
+      "Legacy PETG Blend",
+    );
+    expect(restoredHistory[0].snapshot?.fdmMaterial.type).not.toBe("PLA");
+    expect(restoredHistory[0].snapshot?.fdmMaterial.costPerKg).toBe(317);
+    expect(restoredHistory[0].snapshot?.fdmMaterial.density).toBe(1.39);
+    expect("id" in restoredHistory[0].snapshot!.fdmMaterial).toBe(false);
+
+    useCalculatorStore.getState().loadHistoryItem(restoredHistory[0].snapshot!);
+    expect(useCalculatorStore.getState().fdmMaterial).toEqual(legacyMaterial);
+    expect(idb.raw(PII_VAULT_STORE, HISTORY_STORAGE_KEY)).toBe(
+      sealedHistoryBeforeReload,
+    );
+    expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).toBe(serializedSettings);
   });
 });

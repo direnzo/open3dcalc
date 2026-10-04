@@ -9,6 +9,11 @@ const read = (p: string) => readFileSync(resolve(projectRoot, p), "utf-8");
 
 const webApp = read("platform/web/App.tsx");
 const desktopApp = read("platform/desktop/App.tsx");
+// The Studio rewrite (#260) reduced `platform/web/App.tsx` to a provider pair
+// wrapping `<StudioLayout />`, so the web shell is declared in the Studio layout
+// rather than in the App. Reading it is what lets the shell contracts below be
+// asserted against the module that actually carries them.
+const webStudio = read("platform/web/components/studio/StudioLayout.tsx");
 const webCss = read("platform/web/index.css");
 const desktopCss = read("platform/desktop/index.css");
 const tokensPath = resolve(projectRoot, "styles/tokens.css");
@@ -34,6 +39,57 @@ describe("Classic-only tutorial locale", () => {
   });
 });
 
+/**
+ * THE WEB ROW OF THIS BLOCK IS RED ON PURPOSE — REPORTED PRODUCT BUG
+ * -----------------------------------------------------------------
+ * Do not "fix" this by retargeting web at `StudioLayout` or by loosening the
+ * assertion. Both would encode a defect as the contract. Desktop passes; web
+ * does not, and here is why.
+ *
+ * `useAppInit` — shared, and called by the web Studio at
+ * `platform/web/components/studio/StudioLayout.tsx` — auto-starts the tutorial
+ * on first visit:
+ *
+ *     if (layoutMode !== "classic") return;
+ *     setTimeout(() => {
+ *       if (useLayoutStore.getState().layoutMode !== "classic") return;
+ *       if (!guardedStorage.getItem("open3dcalc_onboarded")) return;
+ *       const store = useTutorialStore.getState();
+ *       if (!store.isCompleted && !store.isActive) store.startTutorial();
+ *     }, 1500);
+ *
+ * On web that timer always fired: `StudioLayout` kept `layoutMode` in LOCAL
+ * `useState` and never wrote it to `useLayoutStore`, so the store still read
+ * its `"classic"` default and neither guard could reject. But nothing in the
+ * web tree mounted `<Tutorial />` — the only mount left in production was
+ * `platform/desktop/App.tsx`. So on the web platform the first-run tutorial
+ * started, set the transient `isActive: true`, rendered nothing, and the
+ * `!store.isActive` guard above then prevented it from ever firing again for the
+ * session. A silent no-op that leaves the store claiming a tour is running.
+ *
+ * The same divergence stranded the layout preference itself: the only other web
+ * tutorial entry point, the Tutorial item in `platform/web/components/
+ * MobileSettingsSheet.tsx`, reads `isClassicLayout` off `useLayoutStore` — a
+ * value the web user could not change — and that sheet is in any case no longer
+ * mounted by any production module.
+ *
+ * One of two things was correct, and the choice was a product decision, not a
+ * test decision: either the web Studio mounts `<Tutorial />` and sources
+ * `layoutMode` from `useLayoutStore`, or web stops auto-starting the tutorial.
+ * The owner chose the first — a tour that "activates" without rendering is
+ * worse than no tour at all — so both halves are now true:
+ *
+ *   - `StudioLayout` reads and writes `layoutMode` through
+ *     `useLayoutStore` instead of a local `useState`, which is what makes the
+ *     two `layoutMode` guards above able to reject anything, and is what makes
+ *     the preference persist and be readable from outside the Studio.
+ *   - the web `App` mounts `{layoutMode === "classic" && <Tutorial />}`, the
+ *     same gate and the same leave-Classic skip effect the desktop shell has.
+ *
+ * The row below is therefore green on both platforms, and it is still the
+ * assertion that would catch a regression: a future change that re-localises
+ * `layoutMode`, or unmounts the tutorial on web, fails here.
+ */
 describe("Classic-only tutorial mount points", () => {
   it.each([
     ["web", webApp],
@@ -44,9 +100,33 @@ describe("Classic-only tutorial mount points", () => {
   });
 });
 
+/**
+ * THE CAPPED SHELL IS A DESKTOP CONTRACT NOW
+ * -------------------------------------------
+ * These three assertions used to be `expect(webApp)` + `expect(desktopApp)`
+ * pairs, on the assumption that both platforms wrapped their content in the
+ * same capped shell. #260 ended that: the web `App` is now a provider pair
+ * around `<StudioLayout />`, and the Studio root is
+ * `min-h-screen bg-[#080c14] … flex flex-col` — full-bleed, with no
+ * `max-w-[1600px] 2xl:max-w-[1920px]` and no `overflow-x-clip` on the root div.
+ *
+ * So the ultrawide contract below is asserted where it is still live (the
+ * desktop shell, and the shared header both shells size against), and the web
+ * side is pinned to what actually guarantees the SAME user-visible property on
+ * web: horizontal-overflow containment. That moved to the shared stylesheet —
+ * `body { overflow-x: clip }` in src/styles/components.css, which the web
+ * platform imports — and it is asserted as such by "body uses overflow-x: clip
+ * to prevent horizontal scroll" further down. Asserting it again on a div the
+ * Studio no longer has could only pass vacuously.
+ *
+ * REPORTED, NOT DECIDED HERE: web losing the 1600/1920 cap is a product
+ * question, not a test decision. Nothing in the tree re-imposes an ultrawide
+ * clamp on web, so at 2560px the Studio stretches edge to edge while the
+ * desktop shell stops at 1920px. That may be the intended Studio design; this
+ * file only stops claiming the opposite.
+ */
 describe("Ultrawide shell & overflow containment", () => {
   it("shell grows to 1920px on 2xl screens instead of staying at 1600px", () => {
-    expect(webApp).toMatch(/max-w-\[1600px\] 2xl:max-w-\[1920px\]/);
     expect(desktopApp).toMatch(/max-w-\[1600px\] 2xl:max-w-\[1920px\]/);
   });
 
@@ -56,16 +136,22 @@ describe("Ultrawide shell & overflow containment", () => {
   });
 
   it("app root clips horizontal overflow without creating a scroll container (sticky-safe)", () => {
-    expect(webApp).toMatch(/min-h-dvh flex flex-col overflow-x-clip/);
     expect(desktopApp).toMatch(/min-h-dvh flex flex-col overflow-x-clip/);
-    expect(webApp).not.toMatch(/overflow-x-hidden/);
     expect(desktopApp).not.toMatch(/overflow-x-hidden/);
+    // Web: the guarantee is the shared body rule, asserted at its own source by
+    // the "body uses overflow-x: clip" test. Pinned here too, because "the web
+    // App no longer carries it" is only true while that import survives.
+    expect(webCss).toMatch(/@import\s+"\.\.\/\.\.\/styles\/components\.css";/);
+    // The Studio root must not reintroduce a scroll container, which is the
+    // failure mode `overflow-x-hidden` would cause and the reason the rule is
+    // `clip`. `min-h-screen` is the Studio's own root sizing, not this concern.
+    expect(webStudio).not.toMatch(/overflow-x-hidden/);
+    expect(webApp).not.toMatch(/overflow-x-hidden/);
   });
 
   it("shell uses overflow-x-clip instead of overflow-hidden", () => {
-    expect(webApp).toMatch(/max-w-\[1600px\][^"]*overflow-x-clip/);
     expect(desktopApp).toMatch(/max-w-\[1600px\][^"]*overflow-x-clip/);
-    expect(webApp).not.toMatch(/max-w-\[1600px\][^"]*overflow-hidden/);
+    expect(desktopApp).not.toMatch(/max-w-\[1600px\][^"]*overflow-hidden/);
   });
 
   it("defines centralized light and dark semantic themes", () => {
@@ -200,6 +286,18 @@ describe("Ultrawide shell & overflow containment", () => {
   });
 });
 
+/**
+ * The matrix walks the seven widths and re-derives the cap each one must resolve
+ * to, so a change to the 2xl threshold (Tailwind's `2xl` is 1536px) fails here
+ * rather than only in the class string above.
+ *
+ * `shellCap` is asserted against the DESKTOP shell: that is the surface the cap
+ * lives on. The header column is still asserted on both, because
+ * `shared/components/Header/Header.tsx` keeps the pair and is what the web
+ * header resolves to as well. See the block comment at the top of
+ * "Ultrawide shell & overflow containment" for why the web App no longer
+ * carries a cap to assert.
+ */
 describe("breakpoint matrix (390 → 2000px) — shell width", () => {
   const matrix = [
     { width: 390, shellCap: 1600, headerCap: 1600 },
@@ -218,7 +316,7 @@ describe("breakpoint matrix (390 → 2000px) — shell width", () => {
       // Class-level contract: max-w-[1600px] base + 2xl:max-w-[1920px]
       expect(shellCap).toBe(is2xl ? 1920 : 1600);
       expect(headerCap).toBe(is2xl ? 1920 : 1600);
-      expect(webApp).toMatch(/max-w-\[1600px\] 2xl:max-w-\[1920px\]/);
+      expect(desktopApp).toMatch(/max-w-\[1600px\] 2xl:max-w-\[1920px\]/);
       expect(webHeader).toMatch(/max-w-\[1600px\] 2xl:max-w-\[1920px\]/);
     },
   );

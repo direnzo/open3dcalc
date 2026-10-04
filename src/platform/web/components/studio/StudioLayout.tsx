@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Tab } from "@/shared/components/AppShell/tabs";
-import { LayoutMode } from "@/shared/stores/layoutStore";
+import { useLayoutStore } from "@/shared/stores/layoutStore";
 import { StudioHeader } from "./StudioHeader";
 import { StudioSubHeader } from "./StudioSubHeader";
 import { StudioSidebar } from "./StudioSidebar";
@@ -36,7 +36,14 @@ import { PiiLockedShell } from "@/shared/components/Privacy/PiiLockedShell";
 
 export const StudioLayout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("calculator");
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("classic");
+  // `layoutMode` is SHARED state, not local. It used to be a local `useState`,
+  // which meant `useLayoutStore` kept reporting its `"classic"` default no matter
+  // what the user picked here — so `useAppInit`'s first-visit tutorial guard
+  // (`useLayoutStore.getState().layoutMode !== "classic"`) could never reject,
+  // and the layout preference was never persisted or readable from anywhere
+  // else. Reading and writing the store makes both guards honest.
+  const layoutMode = useLayoutStore((state) => state.layoutMode);
+  const setLayoutMode = useLayoutStore((state) => state.setLayoutMode);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window !== "undefined") {
       return window.innerWidth < 1280;
@@ -174,7 +181,7 @@ export const StudioLayout: React.FC = () => {
               </span>
               <button
                 onClick={() => setFocusMode(false)}
-                className="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold"
+                className="px-3 py-1 rounded-lg bg-purple-600 hover:ring-2 hover:ring-purple-500/40 text-white font-bold"
               >
                 Sair do Modo Foco (Esc)
               </button>

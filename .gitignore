@@ -82,3 +82,5 @@ release-notes-output/
 
 # v2.0 prototype — future launch, not part of the current build
 Example/
+opencode.json
+AGENTS.md

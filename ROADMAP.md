@@ -1,6 +1,6 @@
 # 🗺️ Open3DCalc — Roadmap
 
-> **Date:** 30/09/2026 (documento original: 18/09/2026)
+> **Date:** 04/10/2026 (documento original: 18/09/2026)
 > **Purpose:** Priority guide for the evolution of Open3DCalc.
 > **Flow:** Every feature follows → branch → PR → review → merge (`BRANCH-POLICY.md`)
 
@@ -13,6 +13,17 @@
 - Consent, tutorial, onboarding, and migration flags must never be synchronized.
 - Users must be able to export and delete their data.
 - Privacy documentation and a privacy review are required before every release.
+
+## Estado da versão publicada — v2.0.0-beta.11
+
+Tag `v2.0.0-beta.11`: `fa23ac5df7e2373e0fe72b97c03d4994d272e59b`, publicada em 04/10/2026; `/beta/index.web.html` referencia `assets/index.web-BThWn8ek.js`. Merge de código não comprova que a interface esteja montada ou publicada na web.
+
+- PRs #248–#264 estão na beta.11, exceto #254 (fechado sem merge). #264 corrigiu a saída web após a falha da beta.10 e antes da publicação da beta.11.
+- A web beta monta `StudioLayout`, com sidebar de dez módulos; isso não corresponde aos cinco destinos definidos em 7o.2.
+- `ProfitAnalyticsModule` e `MaterialEfficiencyHeatmap` existem no source, mas não na shell web ativa: o primeiro está no Dashboard compartilhado e o segundo não tem mount de produção encontrado. Não afirmar UI pública entregue.
+- Mini-Dash usa números/alertas demonstrativos. O Copilot usa respostas locais fixas, apesar do rótulo “Copilot IA”; não é IA funcional e `v2-no-ai` continua vigente.
+- Os gates PII/export existentes não completam a checklist transversal LGPD das linhas 76–98.
+- Em 7q, IA, frota fora desta fase e vínculo cliente já têm decisão; continuam abertas a unidade de `usefulLife` e a formalização da decisão sobre `Example`. Coverage da beta.11 não foi medida.
 
 ---
 
@@ -1295,7 +1306,7 @@ N6  Revenue Trends            ── independente, não espera N0
 
 ### 🧭 Phase 7o: App Shell, navegação e espaços de trabalho
 
-**Status:** etapas aprovadas pela pessoa usuária; Stage 1 — Navigation Context —, Stage 2 — Currency/Theme — e Stage 3 — Navegação primária, destino ativo persistido e Manage Visibility — implementadas e mescladas em `main`; etapas 4–8 não iniciadas. Esta fase descreve oito fatias separadas, cada uma entregável em PR próprio; sequência e dependências estão explícitas abaixo. Nenhuma delas autoriza alterar o escopo vigente da Beta 5. O plano desta fase entrou no roadmap pelo PR #223, mesclado como `67b43f34674f2aa5c5c0d394cb68383688509cf1`.
+**Status:** etapas aprovadas pela pessoa usuária; Stage 1 — Navigation Context —, Stage 2 — Currency/Theme — e Stage 3 — navegação primária, destino ativo persistido e Manage Visibility — foram implementadas e mescladas em `main`, mas o aceite de 7o.2 segue aberto até reconciliar o plano com a shell web publicada. 7o.4–7o.7 têm implementação parcial/scaffolds, com critérios pendentes; 7o.3 e 7o.8 não iniciadas. Esta fase descreve oito fatias separadas, cada uma entregável em PR próprio; sequência e dependências estão explícitas abaixo. Nenhuma delas autoriza alterar o escopo vigente da Beta 5. O plano desta fase entrou no roadmap pelo PR #223, mesclado como `67b43f34674f2aa5c5c0d394cb68383688509cf1`.
 
 **Relação com o roadmap existente:** esta fase não substitui, reordena nem absorve W1–W3, o port visual da Beta 5 ou a Phase 7n. Esses trabalhos continuam independentes; qualquer dependência entre eles deve ser declarada antes de iniciar a fatia afetada. A Phase 7n mantém seus próprios dados e pré-requisitos: em particular, os itens que dependem de frota real continuam bloqueados até N0, e métricas sem modelos, dados e fórmulas reais permanecem adiadas.
 
@@ -1321,7 +1332,7 @@ Currency e Theme Context implementados, aprovados pela Themis após três corre�
 
 #### 7o.2 — Navegação primária persistente e visibilidade configurável
 
-**Status:** implementada e mesclada em `main`. Manter cinco destinos primários — **Pricing, Dashboard, History, Printers e Spools** — e persistir a aba ativa conforme o comportamento de referência em `Example/`. PR [#229](https://github.com/ils15/open3dcalc/pull/229) squash-merged como `048211ea569c5ad04b13a6b02bf35e803b9dc311`, aprovado pela Themis no SHA exato de revisão `a4333edcd443f965cd8e46d9cb130a2a63fd7a95` após cinco rodadas de revisão.
+**Status:** há implementação mesclada em `main`, mas o critério dos cinco destinos — **Pricing, Dashboard, History, Printers e Spools** — permanece aberto até reconciliação: a web beta publicada monta `StudioLayout` com sidebar de dez módulos, não esses cinco destinos. O merge do PR [#229](https://github.com/ils15/open3dcalc/pull/229), squash-merged como `048211ea569c5ad04b13a6b02bf35e803b9dc311` e aprovado pela Themis no SHA exato de revisão `a4333edcd443f965cd8e46d9cb130a2a63fd7a95`, não comprova por si só que o critério esteja presente na UI publicada.
 
 Duas falhas reais foram encontradas e corrigidas durante a revisão, e não depois do merge. `useDismissablePopover` escuta em `window`, que é ancestral de `document` no caminho de propagação, de modo que Escape fechava o diálogo de visibilidade **e** o dropdown de configurações que estava atrás dele. E `useId` estava declarado depois de um retorno antecipado em `MoreMenu`, o que mudava a ordem de hooks sempre que todos os destinos rebaixados estavam ocultos. A autora reportou e restaurou, por conta própria, duas asserções que havia enfraquecido antes.
 
@@ -1347,7 +1358,7 @@ A entrega cobre apenas esta fatia. Nenhum dado persistido central mudou e nada a
 
 #### 7o.4 — Focus Mode transitório
 
-**Status:** aprovada; não iniciada. Oferecer uma superfície somente de calculadora, escondendo a navegação e a sidebar enquanto o modo estiver ativo.
+**Status:** implementação parcial; scaffolds de Focus Mode existem na shell, mas os critérios de aceite estão pendentes. Oferecer uma superfície somente de calculadora, escondendo a navegação e a sidebar enquanto o modo estiver ativo.
 
 **Acceptance criteria:**
 
@@ -1358,7 +1369,7 @@ A entrega cobre apenas esta fatia. Nenhum dado persistido central mudou e nada a
 
 #### 7o.5 — Mini-Dash fora do Dashboard
 
-**Status:** aprovada; não iniciada. Disponibilizar um Mini-Dash compacto fora da tela Dashboard, com opção clara de reabrir ou expandir.
+**Status:** implementação parcial; há scaffold de Mini-Dash, mas os valores demonstrativos não atendem ao critério de métricas verificadas; critérios de aceite pendentes. Disponibilizar um Mini-Dash compacto fora da tela Dashboard, com opção clara de reabrir ou expandir.
 
 **Acceptance criteria:**
 
@@ -1369,7 +1380,7 @@ A entrega cobre apenas esta fatia. Nenhum dado persistido central mudou e nada a
 
 #### 7o.6 — Gerenciador e guia global de atalhos
 
-**Status:** aprovada; não iniciada. Centralizar atalhos da aplicação e oferecer um guia acessível, após auditoria de conflitos com navegador e sistema operacional.
+**Status:** implementação parcial; há scaffolding de atalhos, mas o gerenciador/guia global e seus critérios de aceite estão pendentes. Centralizar atalhos da aplicação e oferecer um guia acessível, após auditoria de conflitos com navegador e sistema operacional.
 
 **Acceptance criteria:**
 
@@ -1380,7 +1391,7 @@ A entrega cobre apenas esta fatia. Nenhum dado persistido central mudou e nada a
 
 #### 7o.7 — Quick Actions em speed dial
 
-**Status:** aprovada; não iniciada. Entregar Quick Actions como uma fatia separada, sem agrupar sua implementação com Mini-Dash ou Dashboard.
+**Status:** implementação parcial; há scaffolding de Quick Actions, com critérios de aceite pendentes. Entregar Quick Actions como uma fatia separada, sem agrupar sua implementação com Mini-Dash ou Dashboard.
 
 **Acceptance criteria:**
 
@@ -1404,15 +1415,16 @@ A entrega cobre apenas esta fatia. Nenhum dado persistido central mudou e nada a
 
 ---
 
-### 📈 Phase 7p: Camada de gráficos — substrato zero
+### 📈 Phase 7p: Camada de gráficos — entrega parcial
 
-> **Esta fase não é um port. É construção.** Os sete gráficos do `Example/` **não existem em nenhum lugar do repositório**. Verificado em 30/09/2026: `RevenueTrendsChart`, `ProfitAnalyticsModule`, `MonthlyRevenueProjectionCard`, `QuarterlyRevenueProjectionCard`, `MaterialEfficiencyHeatmap`, `MiniDashOverlay` e `CostBreakdownPieChart` têm **zero ocorrências** em `src/` — nem como componente, nem como constante, nem como string. A única ocorrência em `main` de vários desses nomes é a **menção neste próprio roadmap**. Isso muda a natureza do trabalho: não há linha para trazer, há superfície para erguer, e o custo é de engenharia, não de extração.
+> **Estado atual:** o diagnóstico de 30/09 de “substrato zero” foi superado pelas entregas dos PRs #249 e #250: `useHistoryAggregates`, `ProfitAnalyticsModule` e `MaterialEfficiencyHeatmap` existem no source. Isso não significa que a UI esteja publicada: `ProfitAnalyticsModule` está no Dashboard compartilhado, fora da shell web ativa, e o heatmap não tem mount de produção encontrado. Os demais gráficos continuam pendentes; a regra contra dados fictícios permanece.
 
-**Status:** escopo mapeado, pré-requisito definido, nenhuma linha implementada.
+**Status:** implementação parcial. O hook e os componentes citados acima existem no source; integração na shell web ativa e demais critérios permanecem pendentes.
 
 #### 🚧 O pré-requisito que desbloqueia quatro componentes de uma vez
 
-- [ ] **`src/shared/hooks/useHistoryAggregates.ts`** — funções **puras**, somente leitura, sem store e sem JSX: `byMonth`, `byQuarter`, `byMaterial`, `byPrinter`. **Sem dados, retornam `null` — nunca `0`.** Esta é a decisão mais importante do design: um gráfico que desenha uma linha em `0` quando não há histórico está **assertando** que a pessoa fez receita zero. `null` desenha um estado vazio. O hook espelha `Dashboard.tsx:170`, que já trata esse caso.
+`src/shared/hooks/useHistoryAggregates.ts` está entregue em 7p.1: funções **puras**, somente leitura, sem store e sem JSX — `byMonth`, `byQuarter`, `byMaterial`, `byPrinter`. **Sem dados, retornam `null` — nunca `0`.** Esta é a decisão mais importante do design: um gráfico que desenha uma linha em `0` quando não há histórico está **assertando** que a pessoa fez receita zero. `null` desenha um estado vazio. O hook espelha `Dashboard.tsx:170`, que já trata esse caso.
+
 - [ ] O hook deve **substituir** as cópias inline que já existem em `historyStore.ts:34-39` (`getTopPrinters` / `getTopMaterials`) e `Dashboard.tsx:248-286`, e não se somar a elas. Duas fontes de agregação é a forma mais rápida de divergirem.
 - [ ] Cobertura de teste, cerca de 120 linhas: histórico vazio; histórico com entrada única; entradas sem snapshot (`entry.snapshot` é `| null` em `types/index.ts:320`); entradas antigas sem `profitPerHour` e sem `totalHoursForProfit` (ambos opcionais em `:300,302` — precisam de `?? estimatedPrintTime`, e apesar do nome o valor é **horas**, `calculator.ts:228`).
 
@@ -1465,7 +1477,7 @@ O `Example/` traz **números inventados que produziriam gráficos mentirosos**. 
 
 **Acceptance criteria:**
 
-- [ ] `useHistoryAggregates` existe, é puro, e **retorna `null` — não `0` — sem dados**, com teste que prova os dois.
+- [x] `useHistoryAggregates` existe, é puro, e **retorna `null` — não `0` — sem dados**, com teste que prova os dois.
 - [ ] Cada gráfico entregue usa agregação real sobre `historyStore`; nenhum número do protótipo sobreviveu sem verificação contra o tipo real, e cada um que foi descartado está anotado com o motivo.
 - [ ] Nenhuma tela apresenta valor inventado como métrica real, e nenhuma estimativa aparece sem o rótulo que a declara estimativa.
 - [ ] Os componentes têm testes RTL, cobertura ≥80%, i18n pt-BR/en-US e WCAG AA — inclusive o overlay, que exige portal, focus-trap, `Escape` e `aria-modal` que o protótipo não tem.
@@ -1560,21 +1572,21 @@ Todos os cinco pares passam AA. O nome do token de tinta (`--color-text-inverse`
 
 > **O que é esta fase.** Não é trabalho; é a lista do que **ninguém pode fechar sem o dono**. Cada item abaixo muda tipo de dado, revoga decisão vigente ou redefine o que é métrica — as três coisas que nenhum agente pode decidir sozinho. Estão aqui porque o pedido de "tudo do `Example/`" colidiu com cada uma delas, e uma colisão silenciosa é o pior jeito de falhar.
 
-**Status:** cinco decisões abertas. Duas foram superdimensionadas pela verificação; uma continua exatamente com o bloqueio descrito; duas têm consequência já medida.
+**Status:** três das cinco decisões já foram respondidas pelo dono — IA fora da V2.0, frota fora desta fase e vínculo cliente↔job no `Quote`. Permanecem abertas a unidade de `usefulLife` (item 4) e a formalização em arquivo da decisão sobre `Example` (item 5). A divergência silenciosa de valores da frota continua registrada como problema, mesmo com as telas adiadas.
 
 #### 1. Cliente Maker — o gap é menor do que se supunha
 
 - [x] **Verificado em 30/09/2026: já existe seletor de cliente na calculadora.** `QuoteSection.tsx:159` lê `useCustomerStore`, `:165` mantém `customerId` em estado, e `:321-329` renderizam o seletor com a lista de clientes. A tela de orçamento já sabe a quem está orçando.
 - [x] **O vínculo cliente↔job vive no orçamento, não no cálculo.** `Quote.customerId` guarda o cliente e `Quote.items[].historyEntryId` (`quoteStore.ts:68`) liga o item ao registro de histórico. Essa é a relação que os gráficos da Phase 7p precisam.
 - **O que realmente falta:** `HistoryEntry` (`types/index.ts:310-321`) **não tem campo de cliente**. Para o Dashboard e a Phase 7p falarem de receita "da Maker", o histórico precisa saber de quem é — hoje essa informação existe só no orçamento, e um job adicionado manualmente ao histórico nunca a teve.
-- [ ] Decisão do dono: adicionar `customerId` ao `HistoryEntry` com retrocompatibilidade de snapshot (campo ausente = sem cliente), ou manter o histórico agnóstico e cruzar por `historyEntryId` na leitura. A primeira muda o tipo e o snapshot; a segunda mantém o domínio intacto e faz a junção na borda. **A segunda é mais barata e a primeira é mais completa.**
+- [x] **Decisão do dono registrada em 30/09/2026:** manter o histórico agnóstico e cruzar por `historyEntryId` na leitura; `HistoryEntry` não ganha `clientId`. Ver seção 6c. Um job sem orçamento continua sem vínculo de cliente.
 
-#### 2. Camada de IA — contradição sem registro em disco
+#### 2. Camada de IA — decisão vigente e rótulo demonstrativo
 
 - [x] **O `Example/` tem `AIAssistantModal` e 3 endpoints Gemini** server-side (analyze-piece, generate-pitch, estimate-photo multimodal).
 - [x] **Existe decisão vigente `v2-no-ai` (22/09/2026) que exclui a camada de IA do escopo imediato da V2.0** — BYOK, Councils #1/#2, ADR-004 e estimate-photo foram adiados.
-- **A contradição:** o escopo foi expandido para "tudo do `Example/`", o que inclui a IA, e a decisão `v2-no-ai` continua valendo e **não foi revogada**. Alguém vai ler o pedido de "tudo" e abrir um modal de IA contra uma decisão registrada.
-- [ ] Decisão do dono: revogar `v2-no-ai` explicitamente (e reavaliar a estimativa por foto, que tem implicação de LGPD), **ou** declarar a IA fora do port e manter a decisão. O que não pode é a situação atual: duas decisões vigentes que se contradizem, sem que nenhuma tenha sido apagada.
+- **Discrepância na beta.11:** o bundle web contém o rótulo “Copilot IA”, mas `StudioCopilotModal` usa respostas locais fixas e é demonstrativo, não IA funcional. Isso não altera a decisão de manter IA fora da V2.0 nem decide remover ou renomear o rótulo.
+- [x] **Decisão do dono registrada em 30/09/2026:** IA fora do port e `v2-no-ai` mantida (ver seção 6a). O rótulo demonstrativo não deve ser interpretado como mudança de escopo ou IA funcional.
 - **Nota de histórico que não pode ser ignorada:** o `AIAssistantModal` do protótipo tem um bug de release: `analysisError` é declarado (`:53`) e renderizado (`:327`) mas **nunca setado no `catch`** (`:105-111`) — a simulação mock #1 é entregue silenciosamente como se fosse análise de IA real. Se a IA entrar, esse caminho não pode portar.
 
 #### 3. Modelo de frota — bloqueia três telas, e a falha é silenciosa
@@ -1583,7 +1595,7 @@ Todos os cinco pares passam AA. O nome do token de tinta (`--color-text-inverse`
 - [x] **`PrinterProfile` (`types/index.ts:36-58`) não tem:** preço de aquisição como dado próprio, data de aquisição, status, capacidade, utilização nem log de horas. O que tem é especificação de fábrica.
 - **Bloqueia:** `PrinterRoiBreakEvenCard` (falta `acquisitionDate` e `status`) e `PrinterHealthScoreCard` (falta `loadMaintenanceCycles()` e `Record<printerId, hoursAccumulated>`). Manutenção e ROI precisam ser **juntos** — construir um sem o outro é retrabalho certo.
 - **🔴 Consequência medida, e é a mais grave das cinco:** adicionar ou reprecificar uma impressora na tela de frota **faz ROI, projeção, analytics e preço sugerido ignorarem a máquina em silêncio**. O preço novo entra no catálogo, e as quatro telas que deveriam consumi-lo continuam lendo o valor antigo — sem erro, sem aviso, sem estado inválido. Não é uma tela que falta; é uma divergência silenciosa que já existe.
-- [ ] Decisão do dono: (a) separar `catalog_printers` (especificação) de `printer_instances` (operação concreta — nome, preço pago, data, status, capacidade, horas, notas) e dar migração retrocompatível; ou (b) declarar o modelo de frota fora da V2.0 e adiar as telas que dependem dele. **A opção (b) é a única que não cria a divergência silenciosa acima** — sem instância, não há preço próprio para divergir.
+- [x] **Decisão do dono registrada em 30/09/2026:** escolher a opção (b), manter a frota fora desta fase e adiar as telas dependentes. Isso não fecha a divergência silenciosa descrita acima. Ver seção 6b.
 
 #### 4. Contradição de unidade em `usefulLife` — antes de virar dinheiro
 
@@ -1648,7 +1660,7 @@ Todos os cinco pares passam AA. O nome do token de tinta (`--color-text-inverse`
 **Acceptance criteria desta fase:**
 
 - [ ] As cinco decisões têm resposta do dono, registrada em arquivo — não em conversa.
-- [ ] A `v2-no-ai` está explicitamente revogada **ou** a IA está declarada fora do port; não existem duas decisões vigentes e contraditórias.
+- [x] A `v2-no-ai` está explicitamente revogada **ou** a IA está declarada fora do port; não existem duas decisões vigentes e contraditórias.
 - [ ] A Phase 7d descreve `usefulLife` na mesma unidade em que o código a consome, e a conversão, se houver, é testada.
 - [ ] A divergência silenciosa da frota — preço novo ignorado por quatro telas — está fechada ou as quatro telas estão explicitamente fora do escopo até existir instância.
 - [ ] Nenhum agente implementa decisão de domínio com base em premissa não registrada.
@@ -1657,9 +1669,9 @@ Todos os cinco pares passam AA. O nome do token de tinta (`--color-text-inverse`
 
 ### 📐 Phase 7r: Defeitos de layout medidos e abertos
 
-> **O que esta fase é.** Quatro defeitos de layout **medidos no browser**, não deduzidos do código, e nenhum deles corrigido. Todos são pré-existentes. Estão registrados porque o padrão de medição que os produziu é o que este documento passa a exigir de qualquer correção de layout — e porque um defeito medido e não registrado é um defeito que a próxima pessoa vai "consertar" de novo.
+> **O que esta fase é.** D1–D4 são medições de 30/09/2026 na shell anterior, não medições da `StudioLayout` montada pela web beta. O PR #248 corrigiu parcialmente o logo a 1280px, mas ele ainda colapsa a 1024px e o breadcrumb não cabia a 1280px. D2 e D4 precisam ser re-medidos na shell atual; nenhum D1–D4 é declarado resolvido.
 
-**Status:** quatro defeitos abertos, nenhum corrigido, todas as medições feitas em 30/09/2026.
+**Status:** D1–D4 permanecem abertos, com baseline de 30/09 na shell anterior. A correção parcial do logo pelo #248 não fecha D1; re-medidas na shell atual são necessárias, especialmente para D2 e D4.
 
 #### 🔴 D1 — A 1024px a marca colapsa para 0,0px
 
@@ -1673,7 +1685,7 @@ Todos os cinco pares passam AA. O nome do token de tinta (`--color-text-inverse`
 
 **Por que o teto de 248px não corrige:** `max-w-[248px]` (`:54`, `459593e`) limita o **crescimento**. O defeito é **colapso**. Um teto contra crescimento não impede uma largura de zero — pior, ele torna o defeito invisível na revisão de código, porque o número que se vê é razoável e o número que se sente é zero. **Um teto de largura não é uma defesa contra colapso; um piso é.**
 
-**Pre-existente, não corrigido.**
+**Permanece aberto a 1024px.** O PR #248 corrigiu parcialmente o logo a 1280px; essa correção não resolve o colapso medido a 1024px.
 
 - [ ] O logo recebe largura mínima de verdade, ou o cluster de ações cede. Decisão de produto: as duasmudam o que cabe a 1024px.
 - [ ] Teste de layout que **mede** a largura renderizada do lockup a 1024px. Não um teste que confere a string de classe — ver a regra transversal no fim desta fase.
@@ -1933,26 +1945,26 @@ IA foi explicitamente confirmada como fora da V2.0. A única área deferred é I
 
 ## 📊 Quality Metrics
 
-| Metric                  | Current                                        | Target                                  |
-| ----------------------- | ---------------------------------------------- | --------------------------------------- |
-| Test coverage (overall) | ⚠️ **Precisa ser re-medida** — ver nota abaixo | ≥60% (Beta 5, aprovado pelo utilizador) |
-| Coverage (calculation)  | 100%                                           | ≥90%                                    |
-| Tests                   | 4.036 (289 files) — medido em `7511904`        | 500+                                    |
-| Components with tests   | Partial                                        | 100%                                    |
-| Accessibility (a11y)    | —                                              | WCAG A                                  |
+| Metric                  | Current                                               | Target                                  |
+| ----------------------- | ----------------------------------------------------- | --------------------------------------- |
+| Test coverage (overall) | ⚠️ **Não medida para a beta.11** — ver nota abaixo    | ≥60% (Beta 5, aprovado pelo utilizador) |
+| Coverage (calculation)  | ⚠️ Não medida para a beta.11                          | ≥90%                                    |
+| Tests                   | 4.255 (304 files) — último CI pós-#264, parent da tag | 500+                                    |
+| Components with tests   | Partial                                               | 100%                                    |
+| Accessibility (a11y)    | —                                                     | WCAG A                                  |
 
-#### ⚠️ A cobertura desta tabela é anterior à `2.0.0-beta.6` e não é re-medida
+#### ⚠️ A cobertura da beta.11 não foi medida
 
-**Os números de cobertura foram medidos em `1b846719` e valem para aquela árvore.** Entre ela e `main` hoje (`2cd273f`, `2.0.0-beta.6`) foram entregues 2 betas: a `beta.5` (segurança e privacidade, ondas W0–W7, PRs #236 e #241–#246) e a `beta.6` (layout, PR #247), mais a leva da branch atual. Nada aqui justifica reaproveitar os agregados antigos como se descrevessem o código de hoje: eles medem um repositório com menos código de produto, menos suites e menos arquivos.
+**O último CI completo após o PR #264 foi executado em `080a23d794e8d543136e1e4de180d6bd7d17f5f6`: 4.255 testes em 304 arquivos.** Esse commit é o parent da tag; `v2.0.0-beta.11` (`fa23ac5`) acrescenta o bump de versão, mas os testes não foram reexecutados diretamente na tag. Portanto, 4.255/304 é a última medição do CI, não uma execução direta da beta.11. Coverage da beta.11 não foi medida; não inferir percentuais a partir de medições antigas.
 
-- [ ] **Re-medir os quatro agregados em `main` e substituir os valores desta tabela.** Até lá, a linha de cobertura overall fica explicitamente sem número, em vez de carregar um número antigo com aparência de atual.
-- A coluna "Current" de cobertura não deve ser preenchida com o número de `1b846719` justamente para não parecer medida. Um número velho honesto vale mais que um número velho fingindo ser de hoje.
-- **A contagem de testes desta tabela já é atual e foi medida nesta atualização:** 4.036 testes em 289 arquivos, em `7511904` (`npm run test:run`, 289 passed / 4.036 passed). O número anterior neste documento, 3.294 em 236 arquivos, era da árvore de `1b846719`.
+- [ ] **Medir coverage para a beta.11 e atualizar os agregados desta tabela.** Até lá, coverage overall e de cálculo permanecem explicitamente sem medição atual.
+- **Não preencher coverage atual com os percentuais históricos de `1b846719`.** Um número velho honesto vale mais que um número velho fingindo ser de hoje.
+- **Contagem atual do último CI completo após #264:** 4.255 testes em 304 arquivos, no commit `080a23d794e8d543136e1e4de180d6bd7d17f5f6`, parent da tag. Não houve execução direta desses testes na tag beta.11.
 - Contexto histórico preservado: em `1b846719` a medição foi de 82,97% statements, 77,01% branches, 78,58% functions e 84,04% lines, com 262 ficheiros na tabela — 38 abaixo de 60% de linhas, 70 abaixo de 80% e 12 a 0%. Esses são os números da **medição antiga**, registrados para comparação quando a nova medição existir. A porta de 60% aprovada pelo utilizador para a Beta 5 continua sendo o alvo; o que mudou foi a árvore, não a meta.
 
 ## 🔒 Not in scope (for now)
 
-- ❌ Modo **Studio**: quinto layout experimental do protótipo, fora do conjunto `classic` / `guided` / `bento` / `farm`
+- ❌ **Modo Studio como quinto `LayoutMode`**: continua fora do escopo. Isso não contradiz a marca ou a shell Studio da web beta; `layoutStore.ts:31` define `classic`, `guided` e `bento`.
 - ❌ Abas de IA: Consultor de Risco & Margem, WhatsApp Pitch e Visão Multimodal (ver Deferred: IA/BYOK)
 - ❌ Estimativa por foto: adiada por depender de backend e de uma política de IA
 - ❌ Extras itemizados: o app tem `extrasCost` escalar; a lista do protótipo exigiria um novo contrato de dados
@@ -1980,6 +1992,6 @@ IA foi explicitamente confirmada como fora da V2.0. A única área deferred é I
 
 ---
 
-_Atualizado em 30 de setembro de 2026 — o documento passa a descrever o estado real em `2.0.0-beta.6` (`main` = `2cd273f`) e a leva da branch atual. Onze correções e seis blocos novos, cada afirmação verificada no código antes de ser escrita. As phases 7, 7b, 7c, 7f e 7g registram a `2.0.0-beta.2`; as entregas das `2.0.0-beta.5` (segurança e privacidade, ondas W0–W7, PRs #236 e #241–#246) e `2.0.0-beta.6` (layout, PR #247, `2126865`) passam a ter bloco próprio. A Phase 7 vai a `beta.6`; a Phase 7i é reformulada — a restrição "Bento read-only" está superada e a pendência virou paridade de cobertura de campos; a C4 da Phase 7h está resolvida com a medição 497px → 280px, e a C4b (controles duplicados) continua aberta e subiu de prioridade porque a superfície ficou editável. A Phase 6 P2 (Hole Tolerance e Press-Fit) passa a constar como tabela pronta e testada aguardando port, com o consumidor por fazer. A Phase 7e registra a decisão de Farm como o quarto modo com zero código implementado — `LayoutMode` tem três valores. O M1 da Phase 7m está entregue em `d5b0624`, com a pendência real do `roundCurrency` fail-high, que não foi implementado. Entram a Higiene do repositório (19 tags `archive/*`, 1 extraída; branches órfãs; 4 componentes órfãos no `Example/`), a Phase 7p (camada de gráficos, substrato zero), a Phase 7q (cinco decisões de domínio pendentes do dono) e a Phase 7r (quatro defeitos de layout medidos, com a regra de que guard por string-match não é prova de layout). A cobertura em Quality Metrics é de `1b846719`, **anterior à `beta.6`**, e fica escrita como pendente de re-medição; a contagem de testes é atual (4.036 em 289 arquivos, medida em `7511904`).
+_Atualizado em 04 de outubro de 2026 — a versão publicada é `2.0.0-beta.11` (tag `fa23ac5`; `main` = `1057e769`). O resumo que segue preserva o registro histórico de 30/09/2026, quando `2.0.0-beta.6` e `main` `2cd273f` eram a referência. Onze correções e seis blocos novos, cada afirmação verificada no código antes de ser escrita. As phases 7, 7b, 7c, 7f e 7g registram a `2.0.0-beta.2`; as entregas das `2.0.0-beta.5` (segurança e privacidade, ondas W0–W7, PRs #236 e #241–#246) e `2.0.0-beta.6` (layout, PR #247, `2126865`) passam a ter bloco próprio. A Phase 7 vai a `beta.6`; a Phase 7i é reformulada — a restrição "Bento read-only" está superada e a pendência virou paridade de cobertura de campos; a C4 da Phase 7h está resolvida com a medição 497px → 280px, e a C4b (controles duplicados) continua aberta e subiu de prioridade porque a superfície ficou editável. A Phase 6 P2 (Hole Tolerance e Press-Fit) passa a constar como tabela pronta e testada aguardando port, com o consumidor por fazer. A Phase 7e registra a decisão de Farm como o quarto modo com zero código implementado — `LayoutMode` tem três valores. O M1 da Phase 7m está entregue em `d5b0624`, com a pendência real do `roundCurrency` fail-high, que não foi implementado. Entram a Higiene do repositório (19 tags `archive/*`, 1 extraída; branches órfãs; 4 componentes órfãos no `Example/`), a Phase 7p (naquele registro, descrita como substrato zero), a Phase 7q (cinco decisões de domínio listadas) e a Phase 7r (quatro defeitos medidos na shell então vigente, com a regra de que guard por string-match não é prova de layout). Naquele snapshot, a cobertura era a de `1b846719`, **anterior à `beta.6`**, e a contagem de testes era 4.036 em 289 arquivos, medida em `7511904`. No estado atual, o hook de 7p está entregue, 7q tem três decisões respondidas e duas abertas, e o CI completo mais recente após #264 registrou 4.255 testes em 304 arquivos no parent da tag; esses testes não foram reexecutados diretamente na beta.11 e sua coverage não foi medida.
 
-**O gate transversal de compatibilidade v2.0 continua aberto, e nada nesta atualização o fecha.** As correções acima são de estado e de texto; nenhuma delas testa v1→v2, nenhuma toca em migração, fixture ou chave de persistência existente, e nenhuma adiciona chave nova. A Phase 7p é a única que introduz persistência — o `useHistoryAggregates` — e ela nasce **read-only sobre o `historyStore` que já existe**, sem escrita e sem formato novo; mas ela não está entregue, e enquanto não estiver, o gate segue integralmente em aberto. A pendência mais próxima de tocá-lo é a decisão 4 da Phase 7q (`usefulLife` em horas ou em anos), que é uma decisão de dono, não uma migração._
+**O gate transversal de compatibilidade v2.0 continua aberto, e nada nesta atualização o fecha.** Esta alteração só atualiza o roadmap: não testa v1→v2 nem altera migrações, fixtures ou chaves de persistência. O `useHistoryAggregates` da Phase 7p já foi entregue e é puro/read-only sobre o `historyStore`, sem escrita ou formato de storage novo; sua existência não fecha o gate e não constitui feature de persistência. A decisão 4 da Phase 7q (`usefulLife` em horas ou em anos) continua pendente do dono._

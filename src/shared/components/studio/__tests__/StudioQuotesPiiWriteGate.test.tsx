@@ -64,6 +64,7 @@ import { PII_STORE_ENVIRONMENT } from "@/shared/lib/crypto/__tests__/piiStoreFix
 import { createFakeIndexedDb } from "@/shared/test/fakeIndexedDb";
 
 const PASS = "senha-sintetica-acesso-4242";
+const LEGACY_QUOTE_STORAGE_KEY = "open3dcalc_quotes_v1";
 const customer: Customer = {
   id: "customer-1",
   name: "Ana Cliente",
@@ -161,6 +162,22 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
 
   it("locked: saving creates nothing and the refusal is VISIBLE, not silent", async () => {
     lockVault();
+    const legacyQuoteStorage = JSON.stringify({
+      state: { quotes: [quote], nextNumber: 2 },
+      version: 1,
+    });
+    window.localStorage.setItem(LEGACY_QUOTE_STORAGE_KEY, legacyQuoteStorage);
+    const persistedLocalStorageBefore = Array.from(
+      { length: window.localStorage.length },
+      (_, index) => {
+        const key = window.localStorage.key(index);
+        return [
+          key,
+          key === null ? null : window.localStorage.getItem(key),
+        ] as const;
+      },
+    ).sort(([left], [right]) => (left ?? "").localeCompare(right ?? ""));
+    const persistedDatabasesBefore = idb.databaseNames();
 
     render(<StudioQuotesView />);
 
@@ -168,6 +185,23 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
 
     // 1. No ghost quote in memory.
     expect(useQuoteStore.getState().quotes).toHaveLength(0);
+
+    // Neither the encrypted vault nor the legacy plaintext/localStorage key
+    // may be created or changed by a refused write.
+    expect(persistedDatabasesBefore).toEqual([]);
+    expect(idb.databaseNames()).toEqual(persistedDatabasesBefore);
+    expect(
+      Array.from({ length: window.localStorage.length }, (_, index) => {
+        const key = window.localStorage.key(index);
+        return [
+          key,
+          key === null ? null : window.localStorage.getItem(key),
+        ] as const;
+      }).sort(([left], [right]) => (left ?? "").localeCompare(right ?? "")),
+    ).toEqual(persistedLocalStorageBefore);
+    expect(window.localStorage.getItem(LEGACY_QUOTE_STORAGE_KEY)).toBe(
+      legacyQuoteStorage,
+    );
 
     // 2. The refusal is recorded with a typed reason.
     expect(getLastPiiWriteRefusal()).toEqual({
@@ -241,10 +275,15 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
 
   it("locked: customer creation is refused before the Zustand store changes", async () => {
     lockVault();
-    render(<StudioCustomerView onTabChange={() => {}} onOpenQuoteModal={() => {}} />);
+    render(
+      <StudioCustomerView onTabChange={() => {}} onOpenQuoteModal={() => {}} />,
+    );
 
     await user.click(screen.getByRole("button", { name: "Cadastrar Cliente" }));
-    await user.type(screen.getByPlaceholderText("Ex: João da Silva"), "Nova Cliente");
+    await user.type(
+      screen.getByPlaceholderText("Ex: João da Silva"),
+      "Nova Cliente",
+    );
     await user.click(screen.getByRole("button", { name: /^Cadastrar$/ }));
 
     expect(useCustomerStore.getState().customers).toHaveLength(0);
@@ -252,22 +291,33 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
       key: PII_STORE_KEY.customers,
       reason: "profile_locked",
     });
-    expect(await screen.findByText(/privacy\.vault\.writeRefusedTitle/)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Ex: João da Silva")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/privacy\.vault\.writeRefusedTitle/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("Ex: João da Silva"),
+    ).toBeInTheDocument();
   });
 
   it("locked: customer edits and deletes are refused before mutation", async () => {
     lockVault();
     useCustomerStore.setState({ customers: [customer] });
-    render(<StudioCustomerView onTabChange={() => {}} onOpenQuoteModal={() => {}} />);
+    render(
+      <StudioCustomerView onTabChange={() => {}} onOpenQuoteModal={() => {}} />,
+    );
 
     await user.click(screen.getByTitle("Editar Cliente"));
     await user.clear(screen.getByPlaceholderText("Ex: João da Silva"));
-    await user.type(screen.getByPlaceholderText("Ex: João da Silva"), "Ana Alterada");
+    await user.type(
+      screen.getByPlaceholderText("Ex: João da Silva"),
+      "Ana Alterada",
+    );
     await user.click(screen.getByRole("button", { name: "Salvar Alterações" }));
 
     expect(useCustomerStore.getState().customers[0].name).toBe(customer.name);
-    expect(await screen.findByText(/privacy\.vault\.writeRefusedTitle/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/privacy\.vault\.writeRefusedTitle/),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByTitle("Excluir Cliente"));
     expect(useCustomerStore.getState().customers).toHaveLength(1);
@@ -286,7 +336,9 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
     await user.click(screen.getByRole("button", { name: "Aprovado" }));
 
     expect(useQuoteStore.getState().quotes[0].status).toBe("draft");
-    expect(await screen.findByText(/privacy\.vault\.writeRefusedTitle/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/privacy\.vault\.writeRefusedTitle/),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "✕" }));
     await user.click(screen.getByTitle("Excluir Orçamento"));
@@ -307,7 +359,10 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
     const customerView = render(
       <>
         <DemoExportBlockedToast />
-        <StudioCustomerView onTabChange={() => {}} onOpenQuoteModal={() => {}} />
+        <StudioCustomerView
+          onTabChange={() => {}}
+          onOpenQuoteModal={() => {}}
+        />
       </>,
     );
     await user.click(
@@ -316,7 +371,9 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
       }),
     );
     expect(open).not.toHaveBeenCalled();
-    expect(await screen.findByText("demo.export.blockedTitle")).toBeInTheDocument();
+    expect(
+      await screen.findByText("demo.export.blockedTitle"),
+    ).toBeInTheDocument();
 
     customerView.unmount();
     useQuoteStore.setState({ quotes: [quote], nextNumber: 2 });
@@ -329,7 +386,9 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
     await user.click(screen.getByTitle("Enviar no WhatsApp"));
 
     expect(open).not.toHaveBeenCalled();
-    expect(await screen.findByText("demo.export.blockedTitle")).toBeInTheDocument();
+    expect(
+      await screen.findByText("demo.export.blockedTitle"),
+    ).toBeInTheDocument();
   });
 
   it("demo: customer email cannot hand off to a native mail client", async () => {
@@ -338,7 +397,10 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
     render(
       <>
         <DemoExportBlockedToast />
-        <StudioCustomerView onTabChange={() => {}} onOpenQuoteModal={() => {}} />
+        <StudioCustomerView
+          onTabChange={() => {}}
+          onOpenQuoteModal={() => {}}
+        />
       </>,
     );
 
@@ -348,7 +410,9 @@ describe("H-4 — StudioQuotesView PII write gate", () => {
     await user.click(
       screen.getByRole("button", { name: /e-mail.*Ana Cliente/i }),
     );
-    expect(await screen.findByText("demo.export.blockedTitle")).toBeInTheDocument();
+    expect(
+      await screen.findByText("demo.export.blockedTitle"),
+    ).toBeInTheDocument();
   });
 
   it("quote action names identify the quote and customer in list and card views", async () => {

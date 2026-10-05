@@ -155,6 +155,25 @@ describe("CalculatorStore core", () => {
     expect(after.enabledSections.energy).toBe(false);
   });
 
+  it("restores a legacy material name and its saved cost and density unchanged", () => {
+    const snapshot = buildSnapshot({
+      fdmMaterial: {
+        ...useCalculatorStore.getState().fdmMaterial,
+        type: "Legacy PETG Blend",
+        costPerKg: 317,
+        density: 1.43,
+      },
+    });
+
+    useCalculatorStore.getState().loadHistoryItem(snapshot);
+
+    const restored = useCalculatorStore.getState().fdmMaterial;
+    expect(restored.type).toBe("Legacy PETG Blend");
+    expect(restored.costPerKg).toBe(317);
+    expect(restored.density).toBe(1.43);
+    expect(restored).toEqual(snapshot.fdmMaterial);
+  });
+
   // ── 5. setActiveTab ───────────────────────────────────────────
   it('setActiveTab("resin") → activeTab changes to resin', () => {
     const store = useCalculatorStore.getState();

@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /
+
+# The calculator is a private business tool and should not be indexed.
+# This policy is advisory; it is not an access-control mechanism.

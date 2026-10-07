@@ -1,0 +1,2 @@
+ALTER TABLE devices
+  ADD COLUMN token_hash VARCHAR(255) NOT NULL AFTER label;

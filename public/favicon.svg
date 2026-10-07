@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="3DiRenzo Calculadora">
+  <rect width="64" height="64" rx="14" fill="#0f172a"/>
+  <path d="M16 18h32v8H24v7h18v8H24v7h24v8H16z" fill="#38bdf8"/>
+  <path d="M16 18h10v38H16z" fill="#fbbf24"/>
+</svg>

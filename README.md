@@ -14,6 +14,14 @@
 
 ---
 
+## 3DiRenzo Calculadora
+
+Este repositório é a edição pessoal do Open3DCalc mantida para a 3DiRenzo.
+A versão publicada está em [calc.3direnzo.com.br](https://calc.3direnzo.com.br/)
+e preserva a licença MIT, os créditos e a relação com o projeto open-source
+original. O plano de identidade, evolução e publicação está em
+[docs/3direnzo-plan.md](docs/3direnzo-plan.md).
+
 ## 🌐 Web App
 
 **https://ils15.github.io/open3dcalc/** — Progressive Web App (PWA) com suporte offline, instalável como aplicativo nativo em qualquer navegador moderno.
@@ -178,6 +186,7 @@ open3dcalc/
 │               ├── storage-adapter.ts
 │               └── theme-persistence.ts
 ├── docs/                          # Documentação
+│   ├── 3direnzo-plan.md           # Plano do fork 3DiRenzo Calculadora
 │   └── wiki/                      # Artigos da aba Wiki (markdown, pt-BR + en-US)
 │       └── README.md              # Contrato de autoria da Wiki (subset, schema)
 ├── db/                            # Database (SQLite via Drizzle ORM)

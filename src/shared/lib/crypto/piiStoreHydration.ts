@@ -71,6 +71,7 @@ export const PII_STORE_KEY = {
   customers: "open3dcalc_customers_v1",
   quotes: "open3dcalc_quotes_v1",
   history: "open3dcalc_history_v2",
+  businessProfile: "open3dcalc_business_profile_v1",
 } as const;
 
 /**
@@ -82,6 +83,7 @@ export const PII_STORE_KEYS = [
   PII_STORE_KEY.customers,
   PII_STORE_KEY.quotes,
   PII_STORE_KEY.history,
+  PII_STORE_KEY.businessProfile,
 ] as const;
 
 export type PiiStoreKey = (typeof PII_STORE_KEYS)[number];

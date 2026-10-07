@@ -109,7 +109,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
       default:
         return {
           icon: <Calculator className="w-3.5 h-3.5 text-blue-400" />,
-          title: "Open3DCalc Studio",
+          title: "3DiRenzo Calculadora",
           subtitle: "Layouts de impressão e precificação",
         };
     }
@@ -154,10 +154,12 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
 
       {/* Center: Branding */}
       <div className="hidden lg:flex items-center gap-2 text-[var(--color-text-secondary)] font-medium tracking-wide">
-        <span className="text-[var(--color-text-primary)] font-bold tracking-tight">
-          Open3DCalc
-        </span>
-        <span className="text-[var(--color-text-muted)]">Studio</span>
+        <img
+          src="/branding/logo_3direnzo.svg"
+          alt="3DiRenzo"
+          className="h-7 w-auto max-w-[150px] object-contain"
+        />
+        <span className="text-[var(--color-text-muted)]">Calculadora</span>
       </div>
 
       {/* Right: Actions */}

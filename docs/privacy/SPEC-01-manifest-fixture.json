@@ -364,6 +364,25 @@
       "version": "1.0"
     },
     {
+      "key": "open3dcalc_business_profile_v1",
+      "surface": "localStorage",
+      "platforms": ["electron", "web", "pwa"],
+      "class": "user_content",
+      "pii": true,
+      "persistence": "encrypted_at_rest",
+      "sync": "never",
+      "export": "user_export",
+      "erasure": "erase_on_delete_all",
+      "retention": {
+        "policy": "user_controlled",
+        "max_days": 0
+      },
+      "purpose": "Local business profile used to generate quotes and commercial documents.",
+      "legal_basis": "consent",
+      "owner": "hermes",
+      "version": "1.0"
+    },
+    {
       "key": "open3dcalc_settings_v2",
       "surface": "localStorage",
       "platforms": ["electron", "web", "pwa"],

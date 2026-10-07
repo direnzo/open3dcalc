@@ -26,16 +26,16 @@ export default defineConfig(
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         },
         manifest: {
-          name: "Open3DCalc - Calculadora 3D Livre",
-          short_name: "Open3DCalc",
+          name: "3DiRenzo Calculadora",
+          short_name: "3DiRenzo Calc",
           // D2: keep the PWA manifest's lang in sync with the document's
           // static `lang="pt-BR"` and i18n's detection default. vite-plugin-pwa
           // otherwise defaults `lang` to "en".
           lang: "pt-BR",
           description:
             "Calculadora de custos de impressão 3D gratuita, open-source e segura.",
-          theme_color: "#8b5cf6",
-          background_color: "#020617",
+          theme_color: "#2e3192",
+          background_color: "#f7f7fb",
           display: "standalone",
           icons: [
             { src: "icon-192.png", sizes: "192x192", type: "image/png" },

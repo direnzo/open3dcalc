@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "Open3DCalc",
-    "subtitle": "Calculadora 3D Livre & Open-Source"
+    "title": "3DiRenzo Calculadora",
+    "subtitle": "Calculadora de custos de impressão 3D"
   },
   "betaBadge": {
     "text": "Beta",
@@ -1643,7 +1643,9 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -1698,7 +1700,9 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -1752,7 +1756,9 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -1814,7 +1820,10 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)", "Lupolima"]
+            "items": [
+              "Ils15 (@ils15)",
+              "Lupolima"
+            ]
           }
         ]
       },
@@ -1839,7 +1848,9 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -1875,7 +1886,9 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -1917,7 +1930,9 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -2001,7 +2016,9 @@
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -2017,11 +2034,15 @@
           },
           {
             "title": "🧹 Outros",
-            "items": ["**release:** V1.8.1 [skip ci] (079945e)"]
+            "items": [
+              "**release:** V1.8.1 [skip ci] (079945e)"
+            ]
           },
           {
             "title": "❤️ Contribuidores",
-            "items": ["Ils15 (@ils15)"]
+            "items": [
+              "Ils15 (@ils15)"
+            ]
           }
         ]
       },
@@ -2053,7 +2074,10 @@
           },
           {
             "title": "✅ Tests",
-            "items": ["417 testes, 36/36 arquivos passando", "Cobertura >80%"]
+            "items": [
+              "417 testes, 36/36 arquivos passando",
+              "Cobertura >80%"
+            ]
           }
         ]
       },
@@ -2687,18 +2711,51 @@
         "label": "Nome do projeto",
         "placeholder": "Ex.: Suporte para fones"
       },
-      "materialType": { "label": "Filamento" },
-      "weightGrams": { "label": "Peso da peça", "unit": "g" },
-      "costPerKg": { "label": "Preço do carretel", "unit": "/kg" },
-      "quantity": { "label": "Quantidade" },
-      "printer": { "label": "Impressora" },
-      "printTimeHours": { "label": "Tempo de impressão", "unit": "h" },
-      "energyCostPerKwh": { "label": "Energia por kWh", "unit": "/kWh" },
-      "setupTimeMinutes": { "label": "Tempo de preparação", "unit": "min" },
-      "postProcessingMinutes": { "label": "Pós-processamento", "unit": "min" },
-      "hourlyRate": { "label": "Valor por hora", "unit": "/h" },
-      "packagingCost": { "label": "Embalagem", "unit": "/un" },
-      "profitMarginPercent": { "label": "Markup sobre o custo", "unit": "%" }
+      "materialType": {
+        "label": "Filamento"
+      },
+      "weightGrams": {
+        "label": "Peso da peça",
+        "unit": "g"
+      },
+      "costPerKg": {
+        "label": "Preço do carretel",
+        "unit": "/kg"
+      },
+      "quantity": {
+        "label": "Quantidade"
+      },
+      "printer": {
+        "label": "Impressora"
+      },
+      "printTimeHours": {
+        "label": "Tempo de impressão",
+        "unit": "h"
+      },
+      "energyCostPerKwh": {
+        "label": "Energia por kWh",
+        "unit": "/kWh"
+      },
+      "setupTimeMinutes": {
+        "label": "Tempo de preparação",
+        "unit": "min"
+      },
+      "postProcessingMinutes": {
+        "label": "Pós-processamento",
+        "unit": "min"
+      },
+      "hourlyRate": {
+        "label": "Valor por hora",
+        "unit": "/h"
+      },
+      "packagingCost": {
+        "label": "Embalagem",
+        "unit": "/un"
+      },
+      "profitMarginPercent": {
+        "label": "Markup sobre o custo",
+        "unit": "%"
+      }
     },
     "nav": {
       "previous": "Anterior",
@@ -2722,7 +2779,6 @@
       "invalidQuantity": "Informe uma quantidade inteira entre 1 e 100.000."
     }
   },
-
   "copilot": {
     "title": "Assistente local",
     "localBadge": "Sugestões locais",
@@ -2750,7 +2806,6 @@
     "github": "GitHub",
     "telegram": "Canal Telegram"
   },
-
   "persistence": {
     "bridge": {
       "startupAriaLabel": "Falha ao abrir o armazenamento local",
